@@ -1,24 +1,25 @@
-
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 from openai import OpenAI
 import gspread
 import pandas as pd
 from oauth2client.service_account import ServiceAccountCredentials
 from dotenv import load_dotenv
 import os
+import json
 
 # Load environment variables
 load_dotenv()
 
 # Flask setup
 app = Flask(__name__)
+CORS(app)
 
 # OpenAI setup
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # Google Sheets setup
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-import json
 creds_dict = json.loads(os.getenv("GOOGLE_CREDENTIALS_JSON"))
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 gs_client = gspread.authorize(creds)
@@ -56,7 +57,7 @@ def recommend_wine(user_prompt):
 
     return response.choices[0].message.content
 
-# Flask route
+# POST route for chatbot
 @app.route("/ask", methods=["POST"])
 def ask():
     data = request.get_json()
@@ -70,8 +71,7 @@ def ask():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# Health check (optional)
+# Health check
 @app.route("/")
 def home():
     return "🍷 Locklear Wine Concierge is running!"
-
