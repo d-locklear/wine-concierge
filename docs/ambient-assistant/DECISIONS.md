@@ -20,7 +20,7 @@ Confirmed 2026-09-25. These answer the "Decisions needed" section of [PROJECT_BR
 ## Prototype progress
 
 - [x] 1. Voice conversation with Start/Stop controls, visible listening status, elapsed time, and "mark important" (`/assistant/`). Verified live on iPhone Safari 2026-09-25.
-- [ ] 2. Conversation transcription and summary
+- [ ] 2. Conversation transcription and summary: built (live two-sided transcript, Quiet mode for meetings, notes on Stop with a review screen); awaiting live test. Speaker labels are only You/Assistant for now; others in the room appear as You.
 - [ ] 3. Review-and-save memory workflow
 - [ ] 4. Search and ask questions across saved memories
 - [ ] 5. Reminders and calendar integration
