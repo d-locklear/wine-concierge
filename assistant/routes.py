@@ -2,7 +2,7 @@ import hmac
 import os
 
 import requests
-from flask import Blueprint, jsonify, request, send_from_directory
+from flask import Blueprint, current_app, jsonify, request, send_from_directory
 
 assistant_bp = Blueprint(
     "assistant",
@@ -33,6 +33,13 @@ def realtime_session_config():
             },
         }
     }
+
+
+def upstream_error_message(resp):
+    try:
+        return resp.json()["error"]["message"]
+    except (ValueError, KeyError, TypeError):
+        return f"HTTP {resp.status_code}"
 
 
 @assistant_bp.route("/")
@@ -68,11 +75,20 @@ def create_session():
         return jsonify({"error": "Could not reach the voice service"}), 502
 
     if not resp.ok:
-        return jsonify({"error": "Voice service refused the session"}), 502
+        detail = upstream_error_message(resp)
+        current_app.logger.error("Realtime session refused (%s): %s", resp.status_code, detail)
+        return jsonify({"error": f"Voice service refused the session: {detail}"}), 502
 
     data = resp.json()
+    # The GA API returns {"value": ...}; the older beta shape nests it under "client_secret".
+    nested = data.get("client_secret") if isinstance(data.get("client_secret"), dict) else {}
+    secret = data.get("value") or nested.get("value")
+    if not secret:
+        current_app.logger.error("Realtime session response had no client secret: keys=%s", list(data))
+        return jsonify({"error": "Voice service returned no session key"}), 502
+
     return jsonify({
-        "client_secret": data.get("value"),
-        "expires_at": data.get("expires_at"),
+        "client_secret": secret,
+        "expires_at": data.get("expires_at") or nested.get("expires_at"),
         "model": realtime_session_config()["session"]["model"],
     })
