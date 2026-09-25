@@ -212,3 +212,11 @@ def test_summarize_upstream_refusal_passes_reason(client, monkeypatch):
         resp = client.post("/assistant/summarize", json=SESSION, headers=AUTH)
     assert resp.status_code == 502
     assert "model not found" in resp.get_json()["error"]
+
+
+@pytest.mark.parametrize("suggested, expected", [("personal", "personal"), ("work", "winery"), (None, "winery")])
+def test_summarize_suggests_a_valid_category(client, monkeypatch, suggested, expected):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-real-secret")
+    with patch("assistant.routes.requests.post", return_value=chat_reply(json.dumps({"category": suggested}))):
+        resp = client.post("/assistant/summarize", json=SESSION, headers=AUTH)
+    assert resp.get_json()["notes"]["category"] == expected

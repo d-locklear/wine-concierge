@@ -54,7 +54,7 @@
     li { background: var(--card); border-radius: 10px; padding: 10px 12px; }
     li time { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 8px; }
     .quiet { width: 100%; display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: 12px; background: var(--card); }
-    .quiet input { width: 22px; height: 22px; accent-color: var(--accent); }
+    .quiet input { flex: none; width: 22px; height: 22px; accent-color: var(--accent); }
     .quiet small { display: block; color: var(--muted); }
     li.assistant { border-left: 3px solid var(--accent); }
     li.mark { background: transparent; border: 1px dashed var(--muted); color: var(--muted); }
@@ -67,6 +67,19 @@
     #review ul { gap: 6px; }
     #review li { background: var(--bg); }
     #review .note { color: var(--muted); font-size: 14px; }
+    .candidate { display: grid; grid-template-columns: 28px 1fr; gap: 6px 8px; align-items: start; }
+    .candidate input[type=checkbox] { width: 22px; height: 22px; margin-top: 2px; accent-color: var(--accent); }
+    .candidate .kind { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+    .candidate textarea {
+      grid-column: 2; width: 100%; min-height: 44px; resize: vertical; font: inherit; color: var(--fg);
+      background: var(--card); border: 1px solid var(--idle); border-radius: 8px; padding: 8px;
+    }
+    .candidate select { grid-column: 2; justify-self: start; font: inherit; padding: 6px 8px; border-radius: 8px; background: var(--card); color: var(--fg); border: 1px solid var(--idle); }
+    .candidate.saved { opacity: .55; }
+    .candidate.saved .kind::after { content: " · saved"; color: #86efac; }
+    #save { width: 100%; padding: 14px; border-radius: 10px; border: none; font-size: 16px; font-weight: 700; background: #15803d; color: #fff; }
+    #save:disabled { opacity: .45; }
+    .toplink { align-self: flex-end; color: var(--muted); font-weight: 600; text-decoration: none; }
     .row { display: flex; gap: 10px; }
     .row button { flex: 1; padding: 14px; border-radius: 10px; border: none; font-size: 16px; font-weight: 600; }
     #copy { background: var(--accent); color: #fff; }
@@ -80,6 +93,7 @@
   </div>
 
   <main>
+    <a class="toplink" href="library">Memories →</a>
     <button id="toggle" aria-pressed="false">Start</button>
     <button id="interrupt">✋ Interrupt</button>
     <button id="mark" disabled>★ Mark important</button>
@@ -95,8 +109,9 @@
 
     <section id="review" aria-live="polite">
       <h3>Session notes</h3>
-      <p class="note">Nothing has been saved. Copy anything you want to keep.</p>
+      <p class="note">Tick what's worth remembering, edit the wording, and pick where it belongs. Nothing is saved until you tap Save.</p>
       <div id="notes"></div>
+      <button id="save" disabled>Save selected</button>
       <div class="row">
         <button id="copy">Copy notes</button>
         <button id="discard">Discard</button>
@@ -132,7 +147,8 @@
     let speaking = false, unmuteTimer = null, muteSafetyTimer = null;
     try { headphonesBox.checked = localStorage.getItem("assistantHeadphones") === "1"; } catch (_) {}
     // Transcript items keyed by the Realtime conversation item id.
-    let entries = new Map(), marks = [], lastNotesText = "";
+    let entries = new Map(), marks = [], lastNotesText = "", sessionStartedAt = null;
+    const CATEGORIES = [["winery", "Winery"], ["projects", "Projects"], ["personal", "Personal"], ["preferences", "Preferences"]];
 
     function fmt(ms) {
       const s = Math.floor(ms / 1000);
@@ -319,6 +335,7 @@
         await pc.setRemoteDescription({ type: "answer", sdp: await sdpResp.text() });
 
         startedAt = Date.now();
+        sessionStartedAt = new Date(startedAt).toISOString();
         timer = setInterval(() => { elapsedEl.textContent = fmt(now()); }, 500);
         setLive(true);
         messageEl.textContent = quietBox.checked
@@ -385,24 +402,86 @@
       }
     }
 
-    function listSection(title, items, render = (x) => x) {
-      if (!items.length) return [];
-      const ul = el("ul");
-      items.forEach((item) => ul.append(el("li", "", render(item))));
-      return [el("h4", "", title), ul];
+    function candidateRow(kind, text, category) {
+      const li = el("li", "candidate");
+      const box = el("input");
+      box.type = "checkbox";
+      const label = el("span", "kind", kind);
+      const area = el("textarea");
+      area.value = text;
+      area.rows = Math.min(6, Math.ceil(text.length / 38));
+      const select = el("select");
+      CATEGORIES.forEach(([value, name]) => {
+        const option = el("option", "", name);
+        option.value = value;
+        select.append(option);
+      });
+      select.value = category;
+      box.addEventListener("change", updateSaveButton);
+      li.append(box, label, area, select);
+      return li;
+    }
+
+    function selectedCandidates() {
+      return [...notesEl.querySelectorAll("li.candidate:not(.saved)")]
+        .filter((li) => li.querySelector("input").checked);
+    }
+
+    function updateSaveButton() {
+      const n = selectedCandidates().length;
+      const saveBtn = document.getElementById("save");
+      saveBtn.disabled = n === 0;
+      saveBtn.textContent = n ? `Save ${n} to memory` : "Save selected";
+    }
+
+    async function saveSelected() {
+      const rows = selectedCandidates();
+      const memories = rows.map((li) => ({
+        text: li.querySelector("textarea").value.trim(),
+        category: li.querySelector("select").value,
+      }));
+      if (memories.some((m) => !m.text)) {
+        messageEl.textContent = "One of the ticked memories is empty. Add text or untick it.";
+        return;
+      }
+      const saveBtn = document.getElementById("save");
+      saveBtn.disabled = true;
+      saveBtn.textContent = "Saving…";
+      try {
+        const resp = await fetch("memories", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Access-Code": accessCode },
+          body: JSON.stringify({ memories, session_started_at: sessionStartedAt }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || "Could not save");
+        rows.forEach((li) => {
+          li.classList.add("saved");
+          li.querySelectorAll("input, textarea, select").forEach((c) => { c.disabled = true; });
+        });
+        messageEl.textContent = `Saved ${data.memories.length} ${data.memories.length === 1 ? "memory" : "memories"}.`;
+      } catch (err) {
+        messageEl.textContent = `Not saved: ${err.message}`;
+      }
+      updateSaveButton();
     }
 
     function showNotes(notes) {
       const action = (a) => a.task + (a.owner ? ` (${a.owner})` : "") + (a.due ? `, due ${a.due}` : "");
       const moment = (m) => `${m.time ? m.time + " " : ""}${m.note}`;
-      notesEl.replaceChildren(
-        el("p", "", notes.summary || "No summary."),
-        ...listSection("Decisions", notes.decisions),
-        ...listSection("Action items", notes.action_items, action),
-        ...listSection("Promises", notes.promises),
-        ...listSection("Open questions", notes.questions),
-        ...listSection("Marked moments", notes.important_moments, moment),
-      );
+      const category = notes.category || "winery";
+      const rows = [];
+      if (notes.summary) rows.push(candidateRow("Summary", notes.summary, category));
+      // Prefix the type so each memory still makes sense when read on its own later.
+      notes.decisions.forEach((d) => rows.push(candidateRow("Decision", `Decided: ${d}`, category)));
+      notes.action_items.forEach((a) => rows.push(candidateRow("Action item", `To do: ${action(a)}`, category)));
+      notes.promises.forEach((p) => rows.push(candidateRow("Promise", `Promised: ${p}`, category)));
+      notes.questions.forEach((q) => rows.push(candidateRow("Open question", `Open question: ${q}`, category)));
+      notes.important_moments.forEach((m) => rows.push(candidateRow("Marked moment", m.note, category)));
+      const list = el("ul");
+      list.append(...rows);
+      notesEl.replaceChildren(rows.length ? list : el("p", "", "No notes came out of this session."));
+      updateSaveButton();
       const block = (title, items, render = (x) => x) =>
         items.length ? `\n${title}:\n` + items.map((i) => `- ${render(i)}`).join("\n") + "\n" : "";
       lastNotesText = `Session notes (${new Date().toLocaleString()})\n\n${notes.summary}\n`
@@ -419,6 +498,7 @@
       entries = new Map();
       marks = [];
       lastNotesText = "";
+      sessionStartedAt = null;
       notesEl.replaceChildren();
       reviewEl.classList.remove("shown");
       renderTranscript();
@@ -427,6 +507,7 @@
     toggleBtn.addEventListener("click", () => (pc ? stop() : start()));
     markBtn.addEventListener("click", () => { marks.push(now()); renderTranscript(); });
     interruptBtn.addEventListener("click", interrupt);
+    document.getElementById("save").addEventListener("click", saveSelected);
     headphonesBox.addEventListener("change", () => {
       try { localStorage.setItem("assistantHeadphones", headphonesBox.checked ? "1" : "0"); } catch (_) {}
       if (headphonesBox.checked) setMic(true);

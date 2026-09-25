@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#1c1917">
+  <title>Memories</title>
+  <style>
+    :root {
+      --bg: #1c1917; --fg: #f5f5f4; --muted: #a8a29e; --card: #292524;
+      --idle: #57534e; --accent: #7c2d12; --danger: #b91c1c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; background: var(--bg); color: var(--fg);
+      font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      padding: env(safe-area-inset-top) 16px env(safe-area-inset-bottom);
+    }
+    main { max-width: 480px; margin: 0 auto; padding: 16px 0 40px; display: flex; flex-direction: column; gap: 16px; }
+    header { display: flex; justify-content: space-between; align-items: center; }
+    header h1 { margin: 0; font-size: 24px; }
+    a { color: var(--muted); font-weight: 600; text-decoration: none; }
+    .chips { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+    .chips button {
+      flex: none; padding: 8px 14px; border-radius: 999px; border: 1px solid var(--idle);
+      background: transparent; color: var(--fg); font: inherit; font-weight: 600;
+    }
+    .chips button.active { background: var(--accent); border-color: var(--accent); }
+    #message { color: var(--muted); min-height: 1.4em; }
+    ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 10px; }
+    li { background: var(--card); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+    .meta { font-size: 13px; color: var(--muted); }
+    .text { white-space: pre-wrap; }
+    textarea {
+      width: 100%; min-height: 80px; resize: vertical; font: inherit; color: var(--fg);
+      background: var(--bg); border: 1px solid var(--idle); border-radius: 8px; padding: 8px;
+    }
+    select { font: inherit; padding: 6px 8px; border-radius: 8px; background: var(--bg); color: var(--fg); border: 1px solid var(--idle); justify-self: start; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .actions button {
+      padding: 8px 14px; border-radius: 8px; border: 1px solid var(--idle);
+      background: transparent; color: var(--fg); font: inherit; font-weight: 600;
+    }
+    .actions button.primary { background: var(--accent); border-color: var(--accent); }
+    .actions button.danger { color: #fca5a5; border-color: var(--danger); }
+    #export { width: 100%; padding: 12px; border-radius: 10px; border: 1px solid var(--idle); background: transparent; color: var(--fg); font: inherit; font-weight: 600; }
+    .empty { color: var(--muted); text-align: center; padding: 24px 0; }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Memories</h1>
+      <a href="./">← Assistant</a>
+    </header>
+    <div class="chips" id="chips"></div>
+    <div id="message" role="status" aria-live="polite">Loading…</div>
+    <ul id="list"></ul>
+    <button id="export">Export all memories</button>
+  </main>
+
+  <script>
+    const CATEGORIES = [["", "All"], ["winery", "Winery"], ["projects", "Projects"], ["personal", "Personal"], ["preferences", "Preferences"]];
+    const chipsEl = document.getElementById("chips");
+    const listEl = document.getElementById("list");
+    const messageEl = document.getElementById("message");
+    let filter = "";
+    let accessCode = null;
+
+    function el(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    function getCode() {
+      try { accessCode = localStorage.getItem("assistantAccessCode"); } catch (_) {}
+      if (!accessCode) accessCode = prompt("Access code");
+      return accessCode;
+    }
+
+    async function api(path, options = {}) {
+      if (!accessCode && !getCode()) throw new Error("An access code is needed.");
+      const resp = await fetch(path, {
+        ...options,
+        headers: { "Content-Type": "application/json", "X-Access-Code": accessCode, ...(options.headers || {}) },
+      });
+      if (resp.status === 401) {
+        try { localStorage.removeItem("assistantAccessCode"); } catch (_) {}
+        accessCode = null;
+      } else if (resp.ok) {
+        try { localStorage.setItem("assistantAccessCode", accessCode); } catch (_) {}
+      }
+      if (resp.status === 204) return null;
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+      return data;
+    }
+
+    function categoryName(value) {
+      return (CATEGORIES.find(([v]) => v === value) || [value, value])[1];
+    }
+
+    function when(iso) {
+      return iso ? new Date(iso).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "";
+    }
+
+    function renderChips() {
+      chipsEl.replaceChildren(...CATEGORIES.map(([value, name]) => {
+        const b = el("button", value === filter ? "active" : "", name);
+        b.addEventListener("click", () => { filter = value; renderChips(); load(); });
+        return b;
+      }));
+    }
+
+    function renderMemory(memory) {
+      const li = el("li");
+      const meta = el("div", "meta",
+        `${categoryName(memory.category)} · from a conversation`
+        + (memory.session_started_at ? ` on ${when(memory.session_started_at)}` : "")
+        + ` · saved ${when(memory.created_at)}`
+        + (memory.updated_at && memory.updated_at !== memory.created_at ? ` · edited ${when(memory.updated_at)}` : ""));
+      const text = el("div", "text", memory.text);
+      const actions = el("div", "actions");
+      const edit = el("button", "", "Edit");
+      const del = el("button", "danger", "Delete");
+      actions.append(edit, del);
+      li.append(meta, text, actions);
+
+      edit.addEventListener("click", () => {
+        const area = el("textarea");
+        area.value = memory.text;
+        const select = el("select");
+        CATEGORIES.slice(1).forEach(([value, name]) => {
+          const o = el("option", "", name);
+          o.value = value;
+          select.append(o);
+        });
+        select.value = memory.category;
+        const save = el("button", "primary", "Save");
+        const cancel = el("button", "", "Cancel");
+        const editActions = el("div", "actions");
+        editActions.append(save, cancel);
+        li.replaceChildren(meta, area, select, editActions);
+        area.focus();
+        cancel.addEventListener("click", () => li.replaceWith(renderMemory(memory)));
+        save.addEventListener("click", async () => {
+          save.disabled = true;
+          try {
+            const data = await api(`memories/${memory.id}`, {
+              method: "PATCH",
+              body: JSON.stringify({ text: area.value, category: select.value }),
+            });
+            messageEl.textContent = "Saved.";
+            if (filter && data.memory.category !== filter) li.remove();
+            else li.replaceWith(renderMemory(data.memory));
+          } catch (err) {
+            messageEl.textContent = `Not saved: ${err.message}`;
+            save.disabled = false;
+          }
+        });
+      });
+
+      del.addEventListener("click", async () => {
+        if (!confirm("Delete this memory permanently?")) return;
+        try {
+          await api(`memories/${memory.id}`, { method: "DELETE" });
+          li.remove();
+          messageEl.textContent = "Deleted.";
+          if (!listEl.children.length) showEmpty();
+        } catch (err) {
+          messageEl.textContent = `Not deleted: ${err.message}`;
+        }
+      });
+      return li;
+    }
+
+    function showEmpty() {
+      listEl.replaceChildren(el("li", "empty",
+        filter ? `No ${categoryName(filter).toLowerCase()} memories yet.` : "No memories yet. Save some from a session's notes."));
+    }
+
+    async function load() {
+      messageEl.textContent = "Loading…";
+      try {
+        const data = await api(`memories${filter ? `?category=${filter}` : ""}`);
+        if (data.memories.length) listEl.replaceChildren(...data.memories.map(renderMemory));
+        else showEmpty();
+        messageEl.textContent = `${data.memories.length} ${data.memories.length === 1 ? "memory" : "memories"}`;
+      } catch (err) {
+        listEl.replaceChildren();
+        messageEl.textContent = err.message;
+      }
+    }
+
+    document.getElementById("export").addEventListener("click", async () => {
+      try {
+        const data = await api("memories/export");
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+        const a = el("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `assistant-memories-${new Date().toISOString().slice(0, 10)}.json`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+        messageEl.textContent = "Exported.";
+      } catch (err) {
+        messageEl.textContent = `Export failed: ${err.message}`;
+      }
+    });
+
+    renderChips();
+    load();
+  </script>
+</body>
+</html>

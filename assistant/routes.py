@@ -2,8 +2,19 @@ import hmac
 import json
 import os
 
+from datetime import datetime, timezone
+
 import requests
-from flask import Blueprint, current_app, jsonify, request, send_from_directory
+from flask import Blueprint, Response, current_app, jsonify, request, send_from_directory
+
+from .memory_store import (
+    CATEGORIES,
+    MAX_MEMORY_CHARS,
+    MemoryNotFound,
+    StorageNotConfigured,
+    UnreadableMemory,
+    get_store,
+)
 
 assistant_bp = Blueprint(
     "assistant",
@@ -41,6 +52,7 @@ Reply with a JSON object with exactly these keys:
 - "promises": commitments someone made to someone else (array of strings)
 - "questions": open questions left unresolved (array of strings)
 - "important_moments": array of {"time": "mm:ss", "note": string} explaining each ★ moment
+- "category": where these notes belong: "winery", "projects", "personal", or "preferences"
 Use empty arrays when there is nothing for a key."""
 
 
@@ -91,6 +103,11 @@ def upstream_error_message(resp):
 @assistant_bp.route("/")
 def index():
     return send_from_directory(assistant_bp.static_folder, "index.html")
+
+
+@assistant_bp.route("/library")
+def library():
+    return send_from_directory(assistant_bp.static_folder, "library.html")
 
 
 @assistant_bp.route("/session", methods=["POST"])
@@ -195,6 +212,7 @@ def normalize_notes(raw):
         "promises": as_str_list(raw.get("promises")),
         "questions": as_str_list(raw.get("questions")),
         "important_moments": moments,
+        "category": raw.get("category") if raw.get("category") in CATEGORIES else "winery",
     }
 
 
@@ -259,3 +277,157 @@ def summarize():
         return jsonify({"error": "Summary service returned an unreadable result"}), 502
 
     return jsonify({"notes": notes, "transcript": transcript})
+
+
+
+def store_or_error():
+    """Return (store, None) or (None, error response)."""
+    try:
+        return get_store(), None
+    except StorageNotConfigured:
+        return None, (jsonify({"error": "Memory storage isn't set up yet (DATABASE_URL and MEMORY_ENCRYPTION_KEY)"}), 503)
+
+
+def clean_memory(item):
+    """Validate one memory from the page. Returns (memory, error message)."""
+    if not isinstance(item, dict):
+        return None, "Each memory must be an object"
+    text = str(item.get("text") or "").strip()
+    category = item.get("category")
+    if not text:
+        return None, "Memory text is empty"
+    if len(text) > MAX_MEMORY_CHARS:
+        return None, f"A memory can be at most {MAX_MEMORY_CHARS} characters"
+    if category not in CATEGORIES:
+        return None, f"Category must be one of: {', '.join(CATEGORIES)}"
+    return {"text": text, "category": category}, None
+
+
+def parse_session_start(value):
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def storage_failure(exc):
+    if isinstance(exc, UnreadableMemory):
+        current_app.logger.error("A stored memory could not be decrypted; MEMORY_ENCRYPTION_KEY may have changed")
+        return jsonify({"error": "Saved memories can't be decrypted. Was MEMORY_ENCRYPTION_KEY changed?"}), 500
+    current_app.logger.error("Memory storage error: %s", type(exc).__name__)
+    return jsonify({"error": "Memory storage is unavailable right now"}), 503
+
+
+@assistant_bp.route("/memories", methods=["GET"])
+def list_memories():
+    denied = check_access()
+    if denied:
+        return denied
+    store, error = store_or_error()
+    if error:
+        return error
+    category = request.args.get("category") or None
+    if category and category not in CATEGORIES:
+        return jsonify({"error": "Unknown category"}), 400
+    try:
+        return jsonify({"memories": store.list(category), "categories": list(CATEGORIES)})
+    except Exception as exc:  # noqa: BLE001 - report storage problems without leaking details
+        return storage_failure(exc)
+
+
+@assistant_bp.route("/memories", methods=["POST"])
+def save_memories():
+    """Save the memories the owner approved on the review screen."""
+    denied = check_access()
+    if denied:
+        return denied
+    store, error = store_or_error()
+    if error:
+        return error
+    body = request.get_json(silent=True) or {}
+    items = body.get("memories")
+    if not isinstance(items, list) or not items:
+        return jsonify({"error": "Choose at least one memory to save"}), 400
+    if len(items) > 100:
+        return jsonify({"error": "Too many memories at once"}), 413
+    cleaned = []
+    for item in items:
+        memory, problem = clean_memory(item)
+        if problem:
+            return jsonify({"error": problem}), 400
+        cleaned.append(memory)
+    try:
+        saved = store.add_many(cleaned, source="conversation", session_started_at=parse_session_start(body.get("session_started_at")))
+    except Exception as exc:  # noqa: BLE001
+        return storage_failure(exc)
+    return jsonify({"memories": saved}), 201
+
+
+@assistant_bp.route("/memories/<int:memory_id>", methods=["PATCH"])
+def edit_memory(memory_id):
+    denied = check_access()
+    if denied:
+        return denied
+    store, error = store_or_error()
+    if error:
+        return error
+    body = request.get_json(silent=True) or {}
+    text = body.get("text")
+    category = body.get("category")
+    if text is None and category is None:
+        return jsonify({"error": "Nothing to change"}), 400
+    if text is not None:
+        text = str(text).strip()
+        if not text or len(text) > MAX_MEMORY_CHARS:
+            return jsonify({"error": f"Memory text must be 1-{MAX_MEMORY_CHARS} characters"}), 400
+    if category is not None and category not in CATEGORIES:
+        return jsonify({"error": "Unknown category"}), 400
+    try:
+        return jsonify({"memory": store.update(memory_id, text=text, category=category)})
+    except MemoryNotFound:
+        return jsonify({"error": "Memory not found"}), 404
+    except Exception as exc:  # noqa: BLE001
+        return storage_failure(exc)
+
+
+@assistant_bp.route("/memories/<int:memory_id>", methods=["DELETE"])
+def delete_memory(memory_id):
+    denied = check_access()
+    if denied:
+        return denied
+    store, error = store_or_error()
+    if error:
+        return error
+    try:
+        store.delete(memory_id)
+    except MemoryNotFound:
+        return jsonify({"error": "Memory not found"}), 404
+    except Exception as exc:  # noqa: BLE001
+        return storage_failure(exc)
+    return "", 204
+
+
+@assistant_bp.route("/memories/export", methods=["GET"])
+def export_memories():
+    """Download every memory (decrypted) plus the audit log as JSON."""
+    denied = check_access()
+    if denied:
+        return denied
+    store, error = store_or_error()
+    if error:
+        return error
+    try:
+        payload = {
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "memories": store.list(),
+            "audit": store.audit(limit=10000),
+        }
+    except Exception as exc:  # noqa: BLE001
+        return storage_failure(exc)
+    return Response(
+        json.dumps(payload, indent=2),
+        mimetype="application/json",
+        headers={"Content-Disposition": "attachment; filename=assistant-memories.json"},
+    )
