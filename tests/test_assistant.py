@@ -111,6 +111,9 @@ def test_session_enables_input_transcription(client, monkeypatch):
     audio_input = post.call_args.kwargs["json"]["session"]["audio"]["input"]
     assert audio_input["transcription"]["model"]
     assert resp.get_json()["transcription_model"] == audio_input["transcription"]["model"]
+    assert audio_input["noise_reduction"]["type"] == "far_field"
+    # The page reuses this so its session.update doesn't drop transcription or noise reduction.
+    assert resp.get_json()["audio_input"] == audio_input
 
 
 def chat_reply(content):
