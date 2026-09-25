@@ -113,9 +113,21 @@
       toggleBtn.disabled = true;
       messageEl.textContent = "Connecting…";
       try {
-        const sessionResp = await fetch("session", { method: "POST" });
+        let code = null;
+        try { code = localStorage.getItem("assistantAccessCode"); } catch (_) {}
+        if (!code) code = prompt("Access code");
+        if (!code) throw new Error("An access code is needed to start.");
+
+        const sessionResp = await fetch("session", {
+          method: "POST",
+          headers: { "X-Access-Code": code },
+        });
         const session = await sessionResp.json();
+        if (sessionResp.status === 401) {
+          try { localStorage.removeItem("assistantAccessCode"); } catch (_) {}
+        }
         if (!sessionResp.ok) throw new Error(session.error || "Could not start a session");
+        try { localStorage.setItem("assistantAccessCode", code); } catch (_) {}
 
         pc = new RTCPeerConnection();
         pc.ontrack = (e) => { remoteAudio.srcObject = e.streams[0]; };

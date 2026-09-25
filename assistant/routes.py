@@ -1,7 +1,8 @@
+import hmac
 import os
 
 import requests
-from flask import Blueprint, jsonify, send_from_directory
+from flask import Blueprint, jsonify, request, send_from_directory
 
 assistant_bp = Blueprint(
     "assistant",
@@ -42,6 +43,13 @@ def index():
 @assistant_bp.route("/session", methods=["POST"])
 def create_session():
     """Mint a short-lived client secret so the browser never sees OPENAI_API_KEY."""
+    access_code = os.getenv("ASSISTANT_ACCESS_CODE")
+    if not access_code:
+        return jsonify({"error": "ASSISTANT_ACCESS_CODE is not configured"}), 500
+    supplied = request.headers.get("X-Access-Code", "")
+    if not hmac.compare_digest(supplied.encode(), access_code.encode()):
+        return jsonify({"error": "Wrong access code"}), 401
+
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         return jsonify({"error": "OPENAI_API_KEY is not configured"}), 500
