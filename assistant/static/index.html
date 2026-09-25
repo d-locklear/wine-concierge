@@ -42,6 +42,11 @@
       background: transparent; color: var(--fg); font-size: 18px; font-weight: 600;
     }
     #mark:disabled { opacity: .35; }
+    #interrupt {
+      display: none; width: 100%; padding: 16px; border-radius: 12px; border: none;
+      background: var(--fg); color: var(--bg); font-size: 18px; font-weight: 700;
+    }
+    #interrupt.shown { display: block; }
     #message { color: var(--muted); min-height: 1.4em; text-align: center; }
     section { width: 100%; }
     h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 0 0 8px; }
@@ -76,10 +81,15 @@
 
   <main>
     <button id="toggle" aria-pressed="false">Start</button>
+    <button id="interrupt">✋ Interrupt</button>
     <button id="mark" disabled>★ Mark important</button>
     <label class="quiet">
       <input type="checkbox" id="quiet">
       <span>Quiet mode<small>Just take notes. The assistant won't reply.</small></span>
+    </label>
+    <label class="quiet">
+      <input type="checkbox" id="headphones">
+      <span>Using headphones<small>Interrupt by talking. Leave off on speaker: the mic pauses while she talks so she doesn't hear herself.</small></span>
     </label>
     <div id="message">Tap Start to talk. The microphone is off until you do.</div>
 
@@ -105,6 +115,8 @@
     const toggleBtn = document.getElementById("toggle");
     const markBtn = document.getElementById("mark");
     const quietBox = document.getElementById("quiet");
+    const headphonesBox = document.getElementById("headphones");
+    const interruptBtn = document.getElementById("interrupt");
     const statusBar = document.getElementById("status-bar");
     const stateLabel = document.getElementById("state-label");
     const elapsedEl = document.getElementById("elapsed");
@@ -115,7 +127,10 @@
     const remoteAudio = document.getElementById("remote-audio");
 
     let pc = null, events = null, micStream = null, startedAt = null, timer = null, stopping = false;
-    let accessCode = null, transcriptionModel = null;
+    let accessCode = null, audioInput = null;
+    // Echo control: on speaker, the mic is paused while the assistant's audio plays.
+    let speaking = false, unmuteTimer = null, muteSafetyTimer = null;
+    try { headphonesBox.checked = localStorage.getItem("assistantHeadphones") === "1"; } catch (_) {}
     // Transcript items keyed by the Realtime conversation item id.
     let entries = new Map(), marks = [], lastNotesText = "";
 
@@ -131,7 +146,9 @@
       toggleBtn.classList.toggle("live", live);
       toggleBtn.textContent = live ? "Stop" : "Start";
       toggleBtn.setAttribute("aria-pressed", String(live));
-      stateLabel.textContent = live ? (quietBox.checked ? "Listening (quiet)" : "Listening") : "Not listening";
+      stateLabel.textContent = !live ? "Not listening"
+        : speaking && !headphonesBox.checked ? "Assistant speaking (mic paused)"
+        : quietBox.checked ? "Listening (quiet)" : "Listening";
       markBtn.disabled = !live;
       document.title = live ? "● Listening: Personal Assistant" : "Personal Assistant";
     }
@@ -177,7 +194,7 @@
           type: "realtime",
           audio: {
             input: {
-              transcription: { model: transcriptionModel },
+              ...audioInput,
               turn_detection: { type: "server_vad", create_response: reply, interrupt_response: reply },
             },
           },
@@ -185,8 +202,45 @@
       };
     }
 
+    function setMic(enabled) {
+      micStream?.getAudioTracks().forEach((t) => { t.enabled = enabled; });
+    }
+
+    function setSpeaking(on) {
+      speaking = on;
+      clearTimeout(unmuteTimer);
+      clearTimeout(muteSafetyTimer);
+      interruptBtn.classList.toggle("shown", on);
+      if (on) {
+        if (!headphonesBox.checked) setMic(false);
+        // Never leave the mic paused indefinitely if a "stopped" event goes missing.
+        muteSafetyTimer = setTimeout(() => setSpeaking(false), 60000);
+      } else {
+        // Short tail so the end of her last word doesn't echo back in.
+        unmuteTimer = setTimeout(() => setMic(true), 400);
+      }
+      if (pc) setLive(true);
+    }
+
+    function interrupt() {
+      if (events?.readyState === "open") {
+        events.send(JSON.stringify({ type: "response.cancel" }));
+        events.send(JSON.stringify({ type: "output_audio_buffer.clear" }));
+      }
+      setSpeaking(false);
+      clearTimeout(unmuteTimer);
+      setMic(true);
+    }
+
     function handleEvent(evt) {
       switch (evt.type) {
+        case "output_audio_buffer.started":
+          setSpeaking(true);
+          break;
+        case "output_audio_buffer.stopped":
+        case "output_audio_buffer.cleared":
+          setSpeaking(false);
+          break;
         case "input_audio_buffer.speech_started":
           upsert(evt.item_id, "user", {});
           break;
@@ -227,7 +281,7 @@
         }
         if (!sessionResp.ok) throw new Error(session.error || "Could not start a session");
         try { localStorage.setItem("assistantAccessCode", accessCode); } catch (_) {}
-        transcriptionModel = session.transcription_model;
+        audioInput = session.audio_input || { transcription: { model: session.transcription_model } };
 
         discard();
         pc = new RTCPeerConnection();
@@ -238,7 +292,9 @@
           }
         };
 
-        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        micStream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        });
         micStream.getTracks().forEach((track) => pc.addTrack(track, micStream));
 
         events = pc.createDataChannel("oai-events");
@@ -280,6 +336,10 @@
       // Release the microphone first so the OS indicator turns off right away.
       micStream?.getTracks().forEach((t) => t.stop());
       micStream = null;
+      speaking = false;
+      clearTimeout(unmuteTimer);
+      clearTimeout(muteSafetyTimer);
+      interruptBtn.classList.remove("shown");
       clearInterval(timer);
       timer = null;
       setLive(false);
@@ -366,6 +426,13 @@
 
     toggleBtn.addEventListener("click", () => (pc ? stop() : start()));
     markBtn.addEventListener("click", () => { marks.push(now()); renderTranscript(); });
+    interruptBtn.addEventListener("click", interrupt);
+    headphonesBox.addEventListener("change", () => {
+      try { localStorage.setItem("assistantHeadphones", headphonesBox.checked ? "1" : "0"); } catch (_) {}
+      if (headphonesBox.checked) setMic(true);
+      else if (speaking) setMic(false);
+      if (pc) setLive(true);
+    });
     quietBox.addEventListener("change", () => {
       if (events?.readyState === "open") events.send(JSON.stringify(turnDetection()));
       if (pc) setLive(true);

@@ -48,6 +48,14 @@ def transcription_model():
     return os.getenv("TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe")
 
 
+def audio_input_config():
+    # far_field suits a phone on a table or speakerphone; near_field suits a headset.
+    return {
+        "transcription": {"model": transcription_model()},
+        "noise_reduction": {"type": os.getenv("NOISE_REDUCTION", "far_field")},
+    }
+
+
 def realtime_session_config():
     return {
         "session": {
@@ -55,7 +63,7 @@ def realtime_session_config():
             "model": os.getenv("REALTIME_MODEL", "gpt-realtime"),
             "instructions": ASSISTANT_INSTRUCTIONS,
             "audio": {
-                "input": {"transcription": {"model": transcription_model()}},
+                "input": audio_input_config(),
                 "output": {"voice": os.getenv("REALTIME_VOICE", "marin")},
             },
         }
@@ -127,6 +135,7 @@ def create_session():
         "expires_at": data.get("expires_at") or nested.get("expires_at"),
         "model": realtime_session_config()["session"]["model"],
         "transcription_model": transcription_model(),
+        "audio_input": audio_input_config(),
     })
 
 
