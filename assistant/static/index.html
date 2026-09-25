@@ -48,6 +48,24 @@
     ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
     li { background: var(--card); border-radius: 10px; padding: 10px 12px; }
     li time { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 8px; }
+    .quiet { width: 100%; display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: 12px; background: var(--card); }
+    .quiet input { width: 22px; height: 22px; accent-color: var(--accent); }
+    .quiet small { display: block; color: var(--muted); }
+    li.assistant { border-left: 3px solid var(--accent); }
+    li.mark { background: transparent; border: 1px dashed var(--muted); color: var(--muted); }
+    li .who { font-weight: 600; margin-right: 6px; }
+    li.pending { color: var(--muted); font-style: italic; }
+    #review { display: none; background: var(--card); border-radius: 14px; padding: 16px; gap: 14px; flex-direction: column; }
+    #review.shown { display: flex; }
+    #review h3 { margin: 0; font-size: 18px; }
+    #review h4 { margin: 8px 0 4px; font-size: 14px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+    #review ul { gap: 6px; }
+    #review li { background: var(--bg); }
+    #review .note { color: var(--muted); font-size: 14px; }
+    .row { display: flex; gap: 10px; }
+    .row button { flex: 1; padding: 14px; border-radius: 10px; border: none; font-size: 16px; font-weight: 600; }
+    #copy { background: var(--accent); color: #fff; }
+    #discard { background: transparent; color: var(--fg); border: 2px solid var(--muted) !important; }
   </style>
 </head>
 <body>
@@ -59,14 +77,24 @@
   <main>
     <button id="toggle" aria-pressed="false">Start</button>
     <button id="mark" disabled>★ Mark important</button>
+    <label class="quiet">
+      <input type="checkbox" id="quiet">
+      <span>Quiet mode<small>Just take notes. The assistant won't reply.</small></span>
+    </label>
     <div id="message">Tap Start to talk. The microphone is off until you do.</div>
 
-    <section>
-      <h2>Marked moments</h2>
-      <ul id="marks"></ul>
+    <section id="review" aria-live="polite">
+      <h3>Session notes</h3>
+      <p class="note">Nothing has been saved. Copy anything you want to keep.</p>
+      <div id="notes"></div>
+      <div class="row">
+        <button id="copy">Copy notes</button>
+        <button id="discard">Discard</button>
+      </div>
     </section>
+
     <section>
-      <h2>Assistant said</h2>
+      <h2>Transcript</h2>
       <ul id="transcript"></ul>
     </section>
   </main>
@@ -76,59 +104,132 @@
   <script>
     const toggleBtn = document.getElementById("toggle");
     const markBtn = document.getElementById("mark");
+    const quietBox = document.getElementById("quiet");
     const statusBar = document.getElementById("status-bar");
     const stateLabel = document.getElementById("state-label");
     const elapsedEl = document.getElementById("elapsed");
     const messageEl = document.getElementById("message");
-    const marksEl = document.getElementById("marks");
     const transcriptEl = document.getElementById("transcript");
+    const reviewEl = document.getElementById("review");
+    const notesEl = document.getElementById("notes");
     const remoteAudio = document.getElementById("remote-audio");
 
-    let pc = null, micStream = null, startedAt = null, timer = null;
+    let pc = null, events = null, micStream = null, startedAt = null, timer = null, stopping = false;
+    let accessCode = null, transcriptionModel = null;
+    // Transcript items keyed by the Realtime conversation item id.
+    let entries = new Map(), marks = [], lastNotesText = "";
 
     function fmt(ms) {
       const s = Math.floor(ms / 1000);
       return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
     }
 
+    function now() { return startedAt ? Date.now() - startedAt : 0; }
+
     function setLive(live) {
       statusBar.classList.toggle("live", live);
       toggleBtn.classList.toggle("live", live);
       toggleBtn.textContent = live ? "Stop" : "Start";
       toggleBtn.setAttribute("aria-pressed", String(live));
-      stateLabel.textContent = live ? "Listening" : "Not listening";
+      stateLabel.textContent = live ? (quietBox.checked ? "Listening (quiet)" : "Listening") : "Not listening";
       markBtn.disabled = !live;
       document.title = live ? "● Listening: Personal Assistant" : "Personal Assistant";
     }
 
-    function addItem(list, text) {
-      const li = document.createElement("li");
-      const t = document.createElement("time");
-      t.textContent = startedAt ? fmt(Date.now() - startedAt) : "";
-      li.append(t, document.createTextNode(text));
-      list.prepend(li);
+    function el(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    function renderTranscript() {
+      const items = [...entries.values()].filter((e) => e.text !== "")
+        .map((e) => ({ ...e, kind: e.speaker }))
+        .concat(marks.map((t) => ({ t, kind: "mark" })))
+        .sort((a, b) => a.t - b.t);
+      transcriptEl.replaceChildren(...items.map((item) => {
+        const li = el("li", item.kind);
+        li.append(el("time", "", fmt(item.t)));
+        if (item.kind === "mark") {
+          li.append("★ Marked important");
+        } else {
+          li.append(el("span", "who", item.speaker === "assistant" ? "Assistant:" : "You:"));
+          if (item.text === null) li.classList.add("pending");
+          li.append(item.text === null ? "…" : item.text);
+        }
+        return li;
+      }));
+    }
+
+    function upsert(id, speaker, fields) {
+      const entry = entries.get(id) || { t: now(), speaker, text: null };
+      Object.assign(entry, fields);
+      entries.set(id, entry);
+      renderTranscript();
+    }
+
+    function turnDetection() {
+      const reply = !quietBox.checked;
+      return {
+        type: "session.update",
+        session: {
+          type: "realtime",
+          audio: {
+            input: {
+              transcription: { model: transcriptionModel },
+              turn_detection: { type: "server_vad", create_response: reply, interrupt_response: reply },
+            },
+          },
+        },
+      };
+    }
+
+    function handleEvent(evt) {
+      switch (evt.type) {
+        case "input_audio_buffer.speech_started":
+          upsert(evt.item_id, "user", {});
+          break;
+        case "conversation.item.input_audio_transcription.completed":
+          upsert(evt.item_id, "user", { text: (evt.transcript || "").trim() });
+          break;
+        case "conversation.item.input_audio_transcription.failed":
+          upsert(evt.item_id, "user", { text: "[inaudible]" });
+          break;
+        case "response.output_audio_transcript.delta":
+          if (!entries.has(evt.item_id)) upsert(evt.item_id, "assistant", {});
+          break;
+        case "response.output_audio_transcript.done":
+          upsert(evt.item_id, "assistant", { text: (evt.transcript || "").trim() });
+          break;
+        case "error":
+          messageEl.textContent = evt.error?.message || "Voice service error";
+          break;
+      }
     }
 
     async function start() {
+      if (reviewEl.classList.contains("shown") && !confirm("Start a new session? The current notes will be discarded.")) return;
       toggleBtn.disabled = true;
       messageEl.textContent = "Connecting…";
       try {
-        let code = null;
-        try { code = localStorage.getItem("assistantAccessCode"); } catch (_) {}
-        if (!code) code = prompt("Access code");
-        if (!code) throw new Error("An access code is needed to start.");
+        try { accessCode = localStorage.getItem("assistantAccessCode"); } catch (_) {}
+        if (!accessCode) accessCode = prompt("Access code");
+        if (!accessCode) throw new Error("An access code is needed to start.");
 
         const sessionResp = await fetch("session", {
           method: "POST",
-          headers: { "X-Access-Code": code },
+          headers: { "X-Access-Code": accessCode },
         });
         const session = await sessionResp.json();
         if (sessionResp.status === 401) {
           try { localStorage.removeItem("assistantAccessCode"); } catch (_) {}
         }
         if (!sessionResp.ok) throw new Error(session.error || "Could not start a session");
-        try { localStorage.setItem("assistantAccessCode", code); } catch (_) {}
+        try { localStorage.setItem("assistantAccessCode", accessCode); } catch (_) {}
+        transcriptionModel = session.transcription_model;
 
+        discard();
         pc = new RTCPeerConnection();
         pc.ontrack = (e) => { remoteAudio.srcObject = e.streams[0]; };
         pc.onconnectionstatechange = () => {
@@ -140,15 +241,9 @@
         micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
         micStream.getTracks().forEach((track) => pc.addTrack(track, micStream));
 
-        const events = pc.createDataChannel("oai-events");
-        events.onmessage = (e) => {
-          const evt = JSON.parse(e.data);
-          if (evt.type === "response.output_audio_transcript.done" && evt.transcript) {
-            addItem(transcriptEl, evt.transcript);
-          } else if (evt.type === "error") {
-            messageEl.textContent = evt.error?.message || "Voice service error";
-          }
-        };
+        events = pc.createDataChannel("oai-events");
+        events.onopen = () => events.send(JSON.stringify(turnDetection()));
+        events.onmessage = (e) => handleEvent(JSON.parse(e.data));
 
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
@@ -168,30 +263,125 @@
         await pc.setRemoteDescription({ type: "answer", sdp: await sdpResp.text() });
 
         startedAt = Date.now();
-        timer = setInterval(() => { elapsedEl.textContent = fmt(Date.now() - startedAt); }, 500);
+        timer = setInterval(() => { elapsedEl.textContent = fmt(now()); }, 500);
         setLive(true);
-        messageEl.textContent = "Listening. Just talk; tap Stop to turn the microphone off.";
+        messageEl.textContent = quietBox.checked
+          ? "Taking notes quietly. Tap Stop when you're done."
+          : "Listening. Just talk; tap Stop to turn the microphone off.";
       } catch (err) {
-        stop(err.message || String(err));
+        stop(err.message || String(err), { summarize: false });
       } finally {
         toggleBtn.disabled = false;
       }
     }
 
-    function stop(message) {
-      // Release the microphone completely so the OS indicator turns off too.
+    async function stop(message, { summarize = true } = {}) {
+      if (stopping) return;
+      // Release the microphone first so the OS indicator turns off right away.
       micStream?.getTracks().forEach((t) => t.stop());
       micStream = null;
-      pc?.close();
-      pc = null;
       clearInterval(timer);
       timer = null;
       setLive(false);
-      messageEl.textContent = message || "Stopped. The microphone is off.";
+      if (!pc) { messageEl.textContent = message || ""; return; }
+
+      stopping = true;
+      toggleBtn.disabled = true;
+      messageEl.textContent = "Finishing the transcript…";
+      // Give the last utterance a moment to finish transcribing.
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline && [...entries.values()].some((e) => e.text === null)) {
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      pc?.close();
+      pc = null;
+      events = null;
+      for (const [id, e] of entries) if (e.text === null) entries.delete(id);
+      renderTranscript();
+
+      if (summarize && entries.size) {
+        await summarizeSession(message);
+      } else {
+        messageEl.textContent = message || "Stopped. The microphone is off.";
+      }
+      stopping = false;
+      toggleBtn.disabled = false;
+    }
+
+    async function summarizeSession(message) {
+      messageEl.textContent = "Microphone off. Writing your notes…";
+      try {
+        const resp = await fetch("summarize", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Access-Code": accessCode },
+          body: JSON.stringify({ entries: [...entries.values()], marks }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || "Could not write notes");
+        showNotes(data.notes);
+        messageEl.textContent = message || "Stopped. The microphone is off.";
+      } catch (err) {
+        messageEl.textContent = `Microphone off. Notes failed: ${err.message}`;
+      }
+    }
+
+    function listSection(title, items, render = (x) => x) {
+      if (!items.length) return [];
+      const ul = el("ul");
+      items.forEach((item) => ul.append(el("li", "", render(item))));
+      return [el("h4", "", title), ul];
+    }
+
+    function showNotes(notes) {
+      const action = (a) => a.task + (a.owner ? ` (${a.owner})` : "") + (a.due ? `, due ${a.due}` : "");
+      const moment = (m) => `${m.time ? m.time + " " : ""}${m.note}`;
+      notesEl.replaceChildren(
+        el("p", "", notes.summary || "No summary."),
+        ...listSection("Decisions", notes.decisions),
+        ...listSection("Action items", notes.action_items, action),
+        ...listSection("Promises", notes.promises),
+        ...listSection("Open questions", notes.questions),
+        ...listSection("Marked moments", notes.important_moments, moment),
+      );
+      const block = (title, items, render = (x) => x) =>
+        items.length ? `\n${title}:\n` + items.map((i) => `- ${render(i)}`).join("\n") + "\n" : "";
+      lastNotesText = `Session notes (${new Date().toLocaleString()})\n\n${notes.summary}\n`
+        + block("Decisions", notes.decisions)
+        + block("Action items", notes.action_items, action)
+        + block("Promises", notes.promises)
+        + block("Open questions", notes.questions)
+        + block("Marked moments", notes.important_moments, moment);
+      reviewEl.classList.add("shown");
+      reviewEl.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    function discard() {
+      entries = new Map();
+      marks = [];
+      lastNotesText = "";
+      notesEl.replaceChildren();
+      reviewEl.classList.remove("shown");
+      renderTranscript();
     }
 
     toggleBtn.addEventListener("click", () => (pc ? stop() : start()));
-    markBtn.addEventListener("click", () => addItem(marksEl, "Marked important"));
+    markBtn.addEventListener("click", () => { marks.push(now()); renderTranscript(); });
+    quietBox.addEventListener("change", () => {
+      if (events?.readyState === "open") events.send(JSON.stringify(turnDetection()));
+      if (pc) setLive(true);
+    });
+    document.getElementById("copy").addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(lastNotesText);
+        messageEl.textContent = "Notes copied. Paste them wherever you keep notes.";
+      } catch (_) {
+        messageEl.textContent = "Couldn't copy automatically. Select the notes and copy them.";
+      }
+    });
+    document.getElementById("discard").addEventListener("click", () => {
+      discard();
+      messageEl.textContent = "Discarded. Nothing was saved.";
+    });
   </script>
 </body>
 </html>
