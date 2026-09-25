@@ -70,3 +70,32 @@ def test_session_upstream_failure(client, monkeypatch):
     with patch("assistant.routes.requests.post", side_effect=requests.ConnectionError):
         resp = client.post("/assistant/session", headers=AUTH)
     assert resp.status_code == 502
+
+
+def test_session_accepts_nested_client_secret_shape(client, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-real-secret")
+    upstream = MagicMock(ok=True)
+    upstream.json.return_value = {"client_secret": {"value": "ek_nested", "expires_at": 5}}
+    with patch("assistant.routes.requests.post", return_value=upstream):
+        resp = client.post("/assistant/session", headers=AUTH)
+    assert resp.status_code == 200
+    assert resp.get_json()["client_secret"] == "ek_nested"
+
+
+def test_session_missing_secret_is_an_error(client, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-real-secret")
+    upstream = MagicMock(ok=True)
+    upstream.json.return_value = {"id": "sess_1"}
+    with patch("assistant.routes.requests.post", return_value=upstream):
+        resp = client.post("/assistant/session", headers=AUTH)
+    assert resp.status_code == 502
+
+
+def test_session_refusal_passes_through_reason(client, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-real-secret")
+    upstream = MagicMock(ok=False, status_code=400)
+    upstream.json.return_value = {"error": {"message": "Unknown parameter"}}
+    with patch("assistant.routes.requests.post", return_value=upstream):
+        resp = client.post("/assistant/session", headers=AUTH)
+    assert resp.status_code == 502
+    assert "Unknown parameter" in resp.get_json()["error"]

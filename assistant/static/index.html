@@ -160,7 +160,11 @@
             "Content-Type": "application/sdp",
           },
         });
-        if (!sdpResp.ok) throw new Error("Voice service rejected the connection");
+        if (!sdpResp.ok) {
+          let detail = `HTTP ${sdpResp.status}`;
+          try { detail += ": " + ((await sdpResp.json()).error?.message || ""); } catch (_) {}
+          throw new Error(`Voice service rejected the connection (${detail})`);
+        }
         await pc.setRemoteDescription({ type: "answer", sdp: await sdpResp.text() });
 
         startedAt = Date.now();
