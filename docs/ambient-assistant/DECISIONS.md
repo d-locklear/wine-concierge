@@ -19,7 +19,7 @@ Confirmed 2026-09-25. These answer the "Decisions needed" section of [PROJECT_BR
 
 ## Prototype progress
 
-- [x] 1. Voice conversation with Start/Stop controls, visible listening status, elapsed time, and "mark important" (`/assistant/`)
+- [x] 1. Voice conversation with Start/Stop controls, visible listening status, elapsed time, and "mark important" (`/assistant/`). Verified live on iPhone Safari 2026-09-25.
 - [ ] 2. Conversation transcription and summary
 - [ ] 3. Review-and-save memory workflow
 - [ ] 4. Search and ask questions across saved memories
