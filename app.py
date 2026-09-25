@@ -7,6 +7,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 from dotenv import load_dotenv
 import os
 import json
+from assistant import assistant_bp
 
 # Load environment variables
 load_dotenv()
@@ -14,6 +15,7 @@ load_dotenv()
 # Flask setup
 app = Flask(__name__)
 CORS(app)
+app.register_blueprint(assistant_bp)
 
 # OpenAI setup
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
