@@ -57,7 +57,7 @@
     .quiet input { flex: none; width: 22px; height: 22px; accent-color: var(--accent); }
     .quiet small { display: block; color: var(--muted); }
     li.assistant { border-left: 3px solid var(--accent); }
-    li.mark { background: transparent; border: 1px dashed var(--muted); color: var(--muted); }
+    li.mark, li.search { background: transparent; border: 1px dashed var(--muted); color: var(--muted); }
     li .who { font-weight: 600; margin-right: 6px; }
     li.pending { color: var(--muted); font-style: italic; }
     #review { display: none; background: var(--card); border-radius: 14px; padding: 16px; gap: 14px; flex-direction: column; }
@@ -147,7 +147,7 @@
     let speaking = false, unmuteTimer = null, muteSafetyTimer = null;
     try { headphonesBox.checked = localStorage.getItem("assistantHeadphones") === "1"; } catch (_) {}
     // Transcript items keyed by the Realtime conversation item id.
-    let entries = new Map(), marks = [], lastNotesText = "", sessionStartedAt = null;
+    let entries = new Map(), marks = [], searches = [], lastNotesText = "", sessionStartedAt = null;
     const CATEGORIES = [["winery", "Winery"], ["projects", "Projects"], ["personal", "Personal"], ["preferences", "Preferences"]];
 
     function fmt(ms) {
@@ -180,12 +180,15 @@
       const items = [...entries.values()].filter((e) => e.text !== "")
         .map((e) => ({ ...e, kind: e.speaker }))
         .concat(marks.map((t) => ({ t, kind: "mark" })))
+        .concat(searches.map((s) => ({ ...s, kind: "search" })))
         .sort((a, b) => a.t - b.t);
       transcriptEl.replaceChildren(...items.map((item) => {
         const li = el("li", item.kind);
         li.append(el("time", "", fmt(item.t)));
         if (item.kind === "mark") {
           li.append("★ Marked important");
+        } else if (item.kind === "search") {
+          li.append(`🔎 Searched memories for "${item.query}": ${item.summary}`);
         } else {
           li.append(el("span", "who", item.speaker === "assistant" ? "Assistant:" : "You:"));
           if (item.text === null) li.classList.add("pending");
@@ -248,8 +251,52 @@
       setMic(true);
     }
 
+    function sendEvent(event) {
+      if (events?.readyState === "open") events.send(JSON.stringify(event));
+    }
+
+    // The assistant asked to search memories: run it, hand back the results, and let her answer.
+    async function runToolCall(call) {
+      let output;
+      const search = { t: now(), query: "", summary: "searching…" };
+      try {
+        const args = JSON.parse(call.arguments || "{}");
+        search.query = args.query || "";
+        searches.push(search);
+        renderTranscript();
+        if (call.name !== "search_memories") throw new Error(`Unknown tool ${call.name}`);
+        const resp = await fetch("memories/search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Access-Code": accessCode },
+          body: JSON.stringify({ query: args.query, category: args.category }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || "Search failed");
+        search.summary = data.results.length ? `${data.results.length} found` : "nothing found";
+        output = {
+          results: data.results.map((m) => ({
+            memory: m.text,
+            category: m.category,
+            from: (m.session_started_at || m.created_at || "").slice(0, 10),
+            relevance: m.score,
+          })),
+        };
+      } catch (err) {
+        search.summary = `failed (${err.message})`;
+        output = { error: `Memory search is unavailable: ${err.message}` };
+      }
+      renderTranscript();
+      sendEvent({ type: "conversation.item.create", item: { type: "function_call_output", call_id: call.call_id, output: JSON.stringify(output) } });
+      sendEvent({ type: "response.create" });
+    }
+
     function handleEvent(evt) {
       switch (evt.type) {
+        case "response.done":
+          (evt.response?.output || [])
+            .filter((item) => item.type === "function_call")
+            .forEach(runToolCall);
+          break;
         case "output_audio_buffer.started":
           setSpeaking(true);
           break;
@@ -497,6 +544,7 @@
     function discard() {
       entries = new Map();
       marks = [];
+      searches = [];
       lastNotesText = "";
       sessionStartedAt = null;
       notesEl.replaceChildren();
