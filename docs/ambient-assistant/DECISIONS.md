@@ -10,6 +10,7 @@ Confirmed 2026-09-25. These answer the "Decisions needed" section of [PROJECT_BR
 | Storage approach | Hybrid | Raw audio stays on the device and is discarded after processing; approved summaries and memories go to an encrypted backend for search. |
 | First integration | Calendar and reminders | Part of the success definition and low risk. |
 | Session history | Keep every session's transcript (text) and notes automatically for 90 days | Decided 2026-09-26. Recall shouldn't depend on remembering to save. Audio is never kept. A per-session "Don't keep this session" switch opts out; expired sessions are deleted automatically; anything worth keeping longer is saved as a memory. |
+| Calendar and reminders | Google Calendar; reminders are short "free" events with a popup alert | Decided 2026-09-26. Reaches phone, watch and computer through the calendar already in use. Connected through the existing service account with domain-wide delegation (calendar.events scope only). |
 | Working name and personality | Open | Placeholder persona: a concise, trusted chief of staff who knows winemaking. |
 
 ## Implementation notes
@@ -18,6 +19,7 @@ Confirmed 2026-09-25. These answer the "Decisions needed" section of [PROJECT_BR
 - Voice uses the OpenAI Realtime API over WebRTC, matching the existing OpenAI setup. The browser receives only a short-lived client secret.
 - Memories live in Render Postgres (`DATABASE_URL`). Memory text is encrypted with a key derived from `MEMORY_ENCRYPTION_KEY`; losing or changing that key makes saved memories unreadable, so keep a copy somewhere safe. Search embeddings are encrypted the same way and compared in the app after decrypting, which is fine up to several thousand memories; beyond that, move to pgvector.
 - Sessions (History page at `/assistant/history`) are encrypted like memories and expire after `SESSION_RETENTION_DAYS` (default 90). The voice assistant can search them alongside memories and read a past conversation's transcript.
+- Calendar access uses `GOOGLE_CREDENTIALS_JSON` with domain-wide delegation to impersonate `GOOGLE_CALENDAR_USER` (scope `calendar.events`). The session prompt includes the current local date and time (`ASSISTANT_TIMEZONE`, default America/New_York) so relative dates resolve correctly.
 - Step 1 ships as a mobile web page (works in iPhone Safari) to test the voice loop before building a native app.
 
 ## Prototype progress
@@ -25,8 +27,8 @@ Confirmed 2026-09-25. These answer the "Decisions needed" section of [PROJECT_BR
 - [x] 1. Voice conversation with Start/Stop controls, visible listening status, elapsed time, and "mark important" (`/assistant/`). Verified live on iPhone Safari 2026-09-25.
 - [x] 2. Conversation transcription and summary: live two-sided transcript, Quiet mode for meetings, notes on Stop with a review screen, and echo control on speakerphone (mic pauses while the assistant talks, Interrupt button, headphones option). Verified live on iPhone 2026-09-25. Speaker labels are only You/Assistant for now; others in the room appear as You.
 - [x] 3. Review-and-save memory workflow: tick, edit and categorize notes on the review screen; Memories page at `/assistant/library` with filter, edit, delete, export; memory text encrypted in Render Postgres with an audit log. Verified live 2026-09-26.
-- [ ] 4. Search and ask questions across saved memories: built (voice questions via a `search_memories` tool, meaning-based search box on the Memories page, encrypted embeddings with automatic backfill); awaiting live test.
-- [ ] 5. Reminders and calendar integration
+- [x] 4. Search and ask questions across saved memories and History: voice questions via `search_memories` and `read_conversation` tools, meaning-based search box on the Memories page, encrypted embeddings with automatic backfill, and automatic 90-day session history with a "Don't keep" switch. Verified live 2026-09-26.
+- [ ] 5. Reminders and calendar integration: built (voice add_reminder, add_calendar_event and check_calendar; read-back and verbal yes before adding; Undo card that can only delete assistant-created events; calendar actions in the audit log); awaiting Google setup and live test.
 - [ ] 6. Winery-specific knowledge and commands
 - [ ] 7. User-initiated camera mode
 - [ ] 8. Wearable and smart-glasses experiments
