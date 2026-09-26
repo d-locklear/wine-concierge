@@ -58,6 +58,10 @@
     .quiet small { display: block; color: var(--muted); }
     li.assistant { border-left: 3px solid var(--accent); }
     li.mark, li.search { background: transparent; border: 1px dashed var(--muted); color: var(--muted); }
+    li.action { border: 1px solid #15803d; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    li.action .what { flex: 1; min-width: 60%; }
+    li.action button { padding: 6px 12px; border-radius: 8px; border: 1px solid var(--muted); background: transparent; color: var(--fg); font: inherit; font-weight: 600; }
+    li.action.undone { border-color: var(--idle); color: var(--muted); text-decoration: line-through; }
     li .who { font-weight: 600; margin-right: 6px; }
     li.pending { color: var(--muted); font-style: italic; }
     #review { display: none; background: var(--card); border-radius: 14px; padding: 16px; gap: 14px; flex-direction: column; }
@@ -157,7 +161,7 @@
     let speaking = false, unmuteTimer = null, muteSafetyTimer = null;
     try { headphonesBox.checked = localStorage.getItem("assistantHeadphones") === "1"; } catch (_) {}
     // Transcript items keyed by the Realtime conversation item id.
-    let entries = new Map(), marks = [], searches = [], lastNotesText = "", sessionStartedAt = null;
+    let entries = new Map(), marks = [], searches = [], actions = [], lastNotesText = "", sessionStartedAt = null;
     let savedSessionId = null;
     const dontKeepBox = document.getElementById("dontkeep");
     const keptEl = document.getElementById("kept");
@@ -195,12 +199,23 @@
         .map((e) => ({ ...e, kind: e.speaker }))
         .concat(marks.map((t) => ({ t, kind: "mark" })))
         .concat(searches.map((s) => ({ ...s, kind: "search" })))
+        .concat(actions.map((a) => ({ ...a, kind: "action" })))
         .sort((a, b) => a.t - b.t);
       transcriptEl.replaceChildren(...items.map((item) => {
         const li = el("li", item.kind);
         li.append(el("time", "", fmt(item.t)));
         if (item.kind === "mark") {
           li.append("★ Marked important");
+        } else if (item.kind === "action") {
+          const action = actions.find((a) => a.id === item.id);
+          li.append(el("span", "what", `📅 ${item.label}`));
+          if (item.undone) {
+            li.classList.add("undone");
+          } else {
+            const undo = el("button", "", "Undo");
+            undo.addEventListener("click", () => undoAction(action, undo));
+            li.append(undo);
+          }
         } else if (item.kind === "search") {
           li.append(`🔎 ${item.query}: ${item.summary}`);
         } else {
@@ -301,6 +316,22 @@
               : { type: "memory", memory: r.text, category: r.category, date: when(r.session_started_at || r.created_at), relevance: r.score }),
           };
         }
+        if (call.name === "add_reminder" || call.name === "add_calendar_event") {
+          const reminder = call.name === "add_reminder";
+          line.query = reminder ? "Adding a reminder" : "Adding a calendar event";
+          const { event } = await postJSON("calendar/events", reminder
+            ? { kind: "reminder", title: args.title, start: args.when, minutes_before: args.minutes_before, notes: args.notes }
+            : { kind: "event", title: args.title, start: args.start, end: args.end, location: args.location, notes: args.notes, minutes_before: args.minutes_before });
+          searches.splice(searches.indexOf(line), 1);
+          actions.push({ id: event.id, t: line.t, label: `${event.title}, ${describeWhen(event.start)}`, undone: false });
+          return { added: true, title: event.title, start: event.start, end: event.end };
+        }
+        if (call.name === "check_calendar") {
+          line.query = "Checked the calendar";
+          const data = await postJSON(`calendar/events?start=${encodeURIComponent(args.start)}&end=${encodeURIComponent(args.end)}`);
+          line.summary = data.events.length ? `${data.events.length} ${data.events.length === 1 ? "event" : "events"}` : "nothing scheduled";
+          return { timezone: data.timezone, events: data.events.map((e) => ({ title: e.title, start: e.start, end: e.end, all_day: e.all_day, location: e.location })) };
+        }
         if (call.name === "read_conversation") {
           line.query = "Read a past conversation";
           const { session } = await postJSON(`sessions/${Number(args.session_id)}`);
@@ -313,6 +344,34 @@
         return { error: `That lookup failed: ${err.message}` };
       } finally {
         renderTranscript();
+      }
+    }
+
+    function describeWhen(iso) {
+      if (!iso) return "";
+      const d = new Date(iso);
+      return iso.length <= 10
+        ? d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })
+        : d.toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    }
+
+    async function undoAction(action, button) {
+      button.disabled = true;
+      try {
+        const resp = await fetch(`calendar/events/${encodeURIComponent(action.id)}`, { method: "DELETE", headers: { "X-Access-Code": accessCode } });
+        if (!resp.ok && resp.status !== 404) {
+          const data = await resp.json().catch(() => ({}));
+          throw new Error(data.error || `HTTP ${resp.status}`);
+        }
+        action.undone = true;
+        renderTranscript();
+        messageEl.textContent = `Removed from your calendar: ${action.label}`;
+        // Let her know, so she doesn't talk about it as if it's still there.
+        sendEvent({ type: "conversation.item.create", item: { type: "message", role: "user",
+          content: [{ type: "input_text", text: `(I tapped Undo, so "${action.label}" was removed from my calendar.)` }] } });
+      } catch (err) {
+        button.disabled = false;
+        messageEl.textContent = `Couldn't undo: ${err.message}`;
       }
     }
 
@@ -602,6 +661,7 @@
       entries = new Map();
       marks = [];
       searches = [];
+      actions = [];
       lastNotesText = "";
       sessionStartedAt = null;
       showKept(null);
