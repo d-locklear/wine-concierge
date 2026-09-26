@@ -46,6 +46,14 @@
     .actions button.danger { color: #fca5a5; border-color: var(--danger); }
     #export { width: 100%; padding: 12px; border-radius: 10px; border: 1px solid var(--idle); background: transparent; color: var(--fg); font: inherit; font-weight: 600; }
     .empty { color: var(--muted); text-align: center; padding: 24px 0; }
+    form.search { display: flex; gap: 8px; }
+    form.search input {
+      flex: 1; min-width: 0; font: inherit; color: var(--fg); background: var(--card);
+      border: 1px solid var(--idle); border-radius: 10px; padding: 10px 12px;
+    }
+    form.search button { padding: 10px 14px; border-radius: 10px; border: none; background: var(--accent); color: #fff; font: inherit; font-weight: 600; }
+    #clear { display: none; background: transparent; border: none; color: var(--muted); font: inherit; font-weight: 600; padding: 0; align-self: flex-start; }
+    #clear.shown { display: block; }
   </style>
 </head>
 <body>
@@ -54,6 +62,11 @@
       <h1>Memories</h1>
       <a href="./">← Assistant</a>
     </header>
+    <form class="search" id="search-form">
+      <input type="search" id="search" placeholder="Search by meaning, e.g. corks" enterkeyhint="search" aria-label="Search memories">
+      <button type="submit">Search</button>
+    </form>
+    <button id="clear">✕ Clear search</button>
     <div class="chips" id="chips"></div>
     <div id="message" role="status" aria-live="polite">Loading…</div>
     <ul id="list"></ul>
@@ -66,6 +79,9 @@
     const listEl = document.getElementById("list");
     const messageEl = document.getElementById("message");
     let filter = "";
+    let searchQuery = "";
+    const searchInput = document.getElementById("search");
+    const clearBtn = document.getElementById("clear");
     let accessCode = null;
 
     function el(tag, className, text) {
@@ -110,7 +126,7 @@
     function renderChips() {
       chipsEl.replaceChildren(...CATEGORIES.map(([value, name]) => {
         const b = el("button", value === filter ? "active" : "", name);
-        b.addEventListener("click", () => { filter = value; renderChips(); load(); });
+        b.addEventListener("click", () => { filter = value; renderChips(); refresh(); });
         return b;
       }));
     }
@@ -194,6 +210,41 @@
         messageEl.textContent = err.message;
       }
     }
+
+    async function runSearch() {
+      messageEl.textContent = "Searching…";
+      clearBtn.classList.add("shown");
+      try {
+        const data = await api("memories/search", {
+          method: "POST",
+          body: JSON.stringify({ query: searchQuery, category: filter || undefined, limit: 20 }),
+        });
+        if (data.results.length) listEl.replaceChildren(...data.results.map(renderMemory));
+        else listEl.replaceChildren(el("li", "empty", `Nothing saved matches "${searchQuery}".`));
+        messageEl.textContent = `${data.results.length} ${data.results.length === 1 ? "match" : "matches"} for "${searchQuery}", best first`;
+      } catch (err) {
+        listEl.replaceChildren();
+        messageEl.textContent = err.message;
+      }
+    }
+
+    function refresh() {
+      return searchQuery ? runSearch() : load();
+    }
+
+    document.getElementById("search-form").addEventListener("submit", (e) => {
+      e.preventDefault();
+      searchQuery = searchInput.value.trim();
+      searchInput.blur();
+      refresh();
+    });
+
+    clearBtn.addEventListener("click", () => {
+      searchQuery = "";
+      searchInput.value = "";
+      clearBtn.classList.remove("shown");
+      load();
+    });
 
     document.getElementById("export").addEventListener("click", async () => {
       try {

@@ -25,6 +25,7 @@ assistant_bp = Blueprint(
 
 REALTIME_CLIENT_SECRETS_URL = "https://api.openai.com/v1/realtime/client_secrets"
 CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions"
+EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings"
 
 MAX_TRANSCRIPT_ENTRIES = 3000
 MAX_TRANSCRIPT_CHARS = 200_000
@@ -33,9 +34,35 @@ MAX_TRANSCRIPT_CHARS = 200_000
 ASSISTANT_INSTRUCTIONS = """You are a private personal assistant for the owner of \
 Locklear Vineyard and Winery in North Carolina. You speak naturally and concisely, \
 like a trusted chief of staff who also knows winemaking and vineyard operations. \
-Keep spoken replies short unless asked for detail. If you are unsure, say so. \
-You cannot yet save memories, set reminders, or take actions; if asked, say that \
-this is coming in a later version rather than pretending to do it."""
+Keep spoken replies short unless asked for detail. If you are unsure, say so.
+
+The owner saves notes from past conversations as memories. When they ask about \
+anything that might be in them (past decisions, plans, commitments, open questions, \
+people, preferences, "what did we say about..."), call search_memories before \
+answering. Answer only from what it returns, mention when a memory is from (for \
+example "on September 25th you decided..."), and if nothing relevant comes back, \
+say you don't have that saved rather than guessing. You cannot yet save new \
+memories by voice, set reminders, or take other actions; if asked, say that is \
+coming in a later version."""
+
+SEARCH_TOOL = {
+    "type": "function",
+    "name": "search_memories",
+    "description": "Search the owner's saved memories by meaning. Use for questions about past "
+                   "conversations, decisions, commitments, plans, open questions, or preferences.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "What to look for, in plain words."},
+            "category": {
+                "type": "string",
+                "enum": ["winery", "projects", "personal", "preferences"],
+                "description": "Only set this if the owner clearly limits the question to one area.",
+            },
+        },
+        "required": ["query"],
+    },
+}
 
 
 SUMMARY_INSTRUCTIONS = """You turn conversation transcripts into concise working notes \
@@ -74,6 +101,8 @@ def realtime_session_config():
             "type": "realtime",
             "model": os.getenv("REALTIME_MODEL", "gpt-realtime"),
             "instructions": ASSISTANT_INSTRUCTIONS,
+            "tools": [SEARCH_TOOL],
+            "tool_choice": "auto",
             "audio": {
                 "input": audio_input_config(),
                 "output": {"voice": os.getenv("REALTIME_VOICE", "marin")},
@@ -280,6 +309,52 @@ def summarize():
 
 
 
+def embedding_model():
+    return os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+
+
+class EmbeddingError(Exception):
+    pass
+
+
+def embed(texts):
+    """Return one embedding per text, or raise EmbeddingError with a readable reason."""
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise EmbeddingError("OPENAI_API_KEY is not configured")
+    vectors = []
+    for start in range(0, len(texts), 100):
+        batch = texts[start:start + 100]
+        try:
+            resp = requests.post(
+                EMBEDDINGS_URL,
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={"model": embedding_model(), "input": batch},
+                timeout=30,
+            )
+        except requests.RequestException as exc:
+            raise EmbeddingError("Could not reach the embedding service") from exc
+        if not resp.ok:
+            raise EmbeddingError(upstream_error_message(resp))
+        try:
+            data = sorted(resp.json()["data"], key=lambda d: d["index"])
+            vectors.extend(d["embedding"] for d in data)
+        except (ValueError, KeyError, TypeError) as exc:
+            raise EmbeddingError("Embedding service returned an unreadable result") from exc
+    if len(vectors) != len(texts):
+        raise EmbeddingError("Embedding service returned the wrong number of results")
+    return vectors
+
+
+def embed_or_none(texts):
+    """Embeddings for saving; on failure save anyway and let search backfill later."""
+    try:
+        return embed(texts)
+    except EmbeddingError as exc:
+        current_app.logger.warning("Saving memories without embeddings for now: %s", exc)
+        return [None] * len(texts)
+
+
 def store_or_error():
     """Return (store, None) or (None, error response)."""
     try:
@@ -358,8 +433,15 @@ def save_memories():
         if problem:
             return jsonify({"error": problem}), 400
         cleaned.append(memory)
+    for memory, vector in zip(cleaned, embed_or_none([m["text"] for m in cleaned])):
+        memory["embedding"] = vector
     try:
-        saved = store.add_many(cleaned, source="conversation", session_started_at=parse_session_start(body.get("session_started_at")))
+        saved = store.add_many(
+            cleaned,
+            source="conversation",
+            session_started_at=parse_session_start(body.get("session_started_at")),
+            embedding_model=embedding_model(),
+        )
     except Exception as exc:  # noqa: BLE001
         return storage_failure(exc)
     return jsonify({"memories": saved}), 201
@@ -384,8 +466,10 @@ def edit_memory(memory_id):
             return jsonify({"error": f"Memory text must be 1-{MAX_MEMORY_CHARS} characters"}), 400
     if category is not None and category not in CATEGORIES:
         return jsonify({"error": "Unknown category"}), 400
+    vector = embed_or_none([text])[0] if text is not None else None
     try:
-        return jsonify({"memory": store.update(memory_id, text=text, category=category)})
+        memory = store.update(memory_id, text=text, category=category, embedding=vector, embedding_model=embedding_model())
+        return jsonify({"memory": memory})
     except MemoryNotFound:
         return jsonify({"error": "Memory not found"}), 404
     except Exception as exc:  # noqa: BLE001
@@ -431,3 +515,40 @@ def export_memories():
         mimetype="application/json",
         headers={"Content-Disposition": "attachment; filename=assistant-memories.json"},
     )
+
+
+@assistant_bp.route("/memories/search", methods=["POST"])
+def search_memories():
+    """Find memories by meaning. Also fingerprints any memories saved without one."""
+    denied = check_access()
+    if denied:
+        return denied
+    store, error = store_or_error()
+    if error:
+        return error
+    body = request.get_json(silent=True) or {}
+    query = str(body.get("query") or "").strip()
+    category = body.get("category") or None
+    if not query:
+        return jsonify({"error": "Search for something"}), 400
+    if len(query) > 1000:
+        return jsonify({"error": "Search is too long"}), 400
+    if category and category not in CATEGORIES:
+        return jsonify({"error": "Unknown category"}), 400
+    limit = body.get("limit")
+    limit = limit if isinstance(limit, int) and 1 <= limit <= 20 else 6
+
+    model = embedding_model()
+    try:
+        missing = store.missing_embeddings(model)
+        if missing:
+            vectors = embed([text for _, text in missing])
+            store.set_embeddings([(memory_id, v) for (memory_id, _), v in zip(missing, vectors)], model)
+        query_vector = embed([query])[0]
+        results = store.search(query_vector, model, category=category, limit=limit)
+    except EmbeddingError as exc:
+        current_app.logger.error("Memory search embedding failed: %s", exc)
+        return jsonify({"error": f"Search service unavailable: {exc}"}), 502
+    except Exception as exc:  # noqa: BLE001
+        return storage_failure(exc)
+    return jsonify({"results": results})

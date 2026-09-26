@@ -220,3 +220,14 @@ def test_summarize_suggests_a_valid_category(client, monkeypatch, suggested, exp
     with patch("assistant.routes.requests.post", return_value=chat_reply(json.dumps({"category": suggested}))):
         resp = client.post("/assistant/summarize", json=SESSION, headers=AUTH)
     assert resp.get_json()["notes"]["category"] == expected
+
+
+def test_session_gives_the_assistant_a_memory_search_tool(client, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-real-secret")
+    upstream = MagicMock(ok=True)
+    upstream.json.return_value = {"value": "ek_temp"}
+    with patch("assistant.routes.requests.post", return_value=upstream) as post:
+        client.post("/assistant/session", headers=AUTH)
+    session = post.call_args.kwargs["json"]["session"]
+    assert [t["name"] for t in session["tools"]] == ["search_memories"]
+    assert "search_memories" in session["instructions"]

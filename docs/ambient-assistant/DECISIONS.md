@@ -15,7 +15,7 @@ Confirmed 2026-09-25. These answer the "Decisions needed" section of [PROJECT_BR
 
 - The backend lives in this repo's Flask app (`assistant/` blueprint), which keeps API credentials server-side.
 - Voice uses the OpenAI Realtime API over WebRTC, matching the existing OpenAI setup. The browser receives only a short-lived client secret.
-- Memories live in Render Postgres (`DATABASE_URL`). Memory text is encrypted with a key derived from `MEMORY_ENCRYPTION_KEY`; losing or changing that key makes saved memories unreadable, so keep a copy somewhere safe.
+- Memories live in Render Postgres (`DATABASE_URL`). Memory text is encrypted with a key derived from `MEMORY_ENCRYPTION_KEY`; losing or changing that key makes saved memories unreadable, so keep a copy somewhere safe. Search embeddings are encrypted the same way and compared in the app after decrypting, which is fine up to several thousand memories; beyond that, move to pgvector.
 - Step 1 ships as a mobile web page (works in iPhone Safari) to test the voice loop before building a native app.
 
 ## Prototype progress
@@ -23,7 +23,7 @@ Confirmed 2026-09-25. These answer the "Decisions needed" section of [PROJECT_BR
 - [x] 1. Voice conversation with Start/Stop controls, visible listening status, elapsed time, and "mark important" (`/assistant/`). Verified live on iPhone Safari 2026-09-25.
 - [x] 2. Conversation transcription and summary: live two-sided transcript, Quiet mode for meetings, notes on Stop with a review screen, and echo control on speakerphone (mic pauses while the assistant talks, Interrupt button, headphones option). Verified live on iPhone 2026-09-25. Speaker labels are only You/Assistant for now; others in the room appear as You.
 - [x] 3. Review-and-save memory workflow: tick, edit and categorize notes on the review screen; Memories page at `/assistant/library` with filter, edit, delete, export; memory text encrypted in Render Postgres with an audit log. Verified live 2026-09-26.
-- [ ] 4. Search and ask questions across saved memories
+- [ ] 4. Search and ask questions across saved memories: built (voice questions via a `search_memories` tool, meaning-based search box on the Memories page, encrypted embeddings with automatic backfill); awaiting live test.
 - [ ] 5. Reminders and calendar integration
 - [ ] 6. Winery-specific knowledge and commands
 - [ ] 7. User-initiated camera mode
