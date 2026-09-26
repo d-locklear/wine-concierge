@@ -36,20 +36,24 @@ Locklear Vineyard and Winery in North Carolina. You speak naturally and concisel
 like a trusted chief of staff who also knows winemaking and vineyard operations. \
 Keep spoken replies short unless asked for detail. If you are unsure, say so.
 
-The owner saves notes from past conversations as memories. When they ask about \
-anything that might be in them (past decisions, plans, commitments, open questions, \
-people, preferences, "what did we say about..."), call search_memories before \
-answering. Answer only from what it returns, mention when a memory is from (for \
-example "on September 25th you decided..."), and if nothing relevant comes back, \
-say you don't have that saved rather than guessing. You cannot yet save new \
-memories by voice, set reminders, or take other actions; if asked, say that is \
-coming in a later version."""
+You can look things up in two places: memories the owner chose to keep, and the \
+history of recent conversations (transcripts and notes from the last few months). \
+When they ask about anything that might be in either (past decisions, plans, \
+commitments, open questions, people, preferences, "what did we say about...", \
+"what did the distributor say on Tuesday"), call search_memories before answering. \
+If a past conversation looks relevant and they want specifics or exact wording, \
+call read_conversation with its session_id. Answer only from what these return, \
+say when something is from (for example "on September 25th you decided..."), and \
+if nothing relevant comes back, say you don't have that rather than guessing. You \
+cannot yet save new memories by voice, set reminders, or take other actions; if \
+asked, say that is coming in a later version."""
 
 SEARCH_TOOL = {
     "type": "function",
     "name": "search_memories",
-    "description": "Search the owner's saved memories by meaning. Use for questions about past "
-                   "conversations, decisions, commitments, plans, open questions, or preferences.",
+    "description": "Search by meaning across the owner's saved memories and recent past conversations. "
+                   "Use for questions about past conversations, decisions, commitments, plans, open "
+                   "questions, or preferences. Results say whether each is a memory or a conversation.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -57,10 +61,23 @@ SEARCH_TOOL = {
             "category": {
                 "type": "string",
                 "enum": ["winery", "projects", "personal", "preferences"],
-                "description": "Only set this if the owner clearly limits the question to one area.",
+                "description": "Only set this if the owner clearly limits the question to one area "
+                               "(this skips past conversations, which have no category).",
             },
         },
         "required": ["query"],
+    },
+}
+
+READ_CONVERSATION_TOOL = {
+    "type": "function",
+    "name": "read_conversation",
+    "description": "Read the notes and full transcript of one past conversation found by search_memories. "
+                   "Use when the owner wants details or exact wording.",
+    "parameters": {
+        "type": "object",
+        "properties": {"session_id": {"type": "integer", "description": "session_id from a search result."}},
+        "required": ["session_id"],
     },
 }
 
@@ -101,7 +118,7 @@ def realtime_session_config():
             "type": "realtime",
             "model": os.getenv("REALTIME_MODEL", "gpt-realtime"),
             "instructions": ASSISTANT_INSTRUCTIONS,
-            "tools": [SEARCH_TOOL],
+            "tools": [SEARCH_TOOL, READ_CONVERSATION_TOOL],
             "tool_choice": "auto",
             "audio": {
                 "input": audio_input_config(),
@@ -137,6 +154,11 @@ def index():
 @assistant_bp.route("/library")
 def library():
     return send_from_directory(assistant_bp.static_folder, "library.html")
+
+
+@assistant_bp.route("/history")
+def history():
+    return send_from_directory(assistant_bp.static_folder, "history.html")
 
 
 @assistant_bp.route("/session", methods=["POST"])
@@ -245,9 +267,94 @@ def normalize_notes(raw):
     }
 
 
+def request_notes(transcript):
+    """Ask the summary model for notes. Returns (notes, None) or (None, error message)."""
+    if len(transcript) > MAX_TRANSCRIPT_CHARS:
+        return None, "Transcript is too long to summarize"
+    try:
+        resp = requests.post(
+            CHAT_COMPLETIONS_URL,
+            headers={
+                "Authorization": f"Bearer {os.getenv('OPENAI_API_KEY')}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": os.getenv("SUMMARY_MODEL", "gpt-5-mini"),
+                "response_format": {"type": "json_object"},
+                "messages": [
+                    {"role": "system", "content": SUMMARY_INSTRUCTIONS},
+                    {"role": "user", "content": transcript},
+                ],
+            },
+            timeout=90,
+        )
+    except requests.RequestException:
+        return None, "Could not reach the summary service"
+
+    if not resp.ok:
+        detail = upstream_error_message(resp)
+        # Log the reason only; never the transcript.
+        current_app.logger.error("Summary refused (%s): %s", resp.status_code, detail)
+        return None, f"Summary service refused the request: {detail}"
+
+    try:
+        content = resp.json()["choices"][0]["message"]["content"]
+        return normalize_notes(json.loads(content)), None
+    except (ValueError, KeyError, IndexError, TypeError):
+        current_app.logger.error("Summary response was not valid JSON notes")
+        return None, "Summary service returned an unreadable result"
+
+
+def retention_days():
+    try:
+        return max(1, int(os.getenv("SESSION_RETENTION_DAYS", "90")))
+    except ValueError:
+        return 90
+
+
+def session_embedding_text(notes, transcript):
+    """What a session is "about" for search: its notes, or the start of the transcript."""
+    if notes:
+        parts = [notes.get("summary") or ""]
+        parts += notes.get("decisions") or []
+        parts += [a.get("task") or "" for a in notes.get("action_items") or []]
+        parts += notes.get("promises") or []
+        parts += notes.get("questions") or []
+        text = "\n".join(p for p in parts if p)
+        if text.strip():
+            return text[:8000]
+    return transcript[:8000]
+
+
+def save_session(body, transcript, notes):
+    """Keep the transcript and notes in History unless the owner said not to."""
+    if body.get("keep") is False:
+        return {"saved": False, "reason": "You chose not to keep this session."}
+    try:
+        store = get_store()
+    except StorageNotConfigured:
+        return {"saved": False, "reason": "History storage isn't set up."}
+    vector = embed_or_none([session_embedding_text(notes, transcript)])[0]
+    try:
+        session = store.add_session(
+            transcript,
+            notes=notes,
+            started_at=parse_session_start(body.get("started_at")),
+            ended_at=parse_session_start(body.get("ended_at")),
+            embedding=vector,
+            embedding_model=embedding_model(),
+            retention_days=retention_days(),
+        )
+    except Exception as exc:  # noqa: BLE001 - the notes are still returned to the page
+        current_app.logger.error("Could not save session to history: %s", type(exc).__name__)
+        return {"saved": False, "reason": "History storage is unavailable right now."}
+    return {"saved": True, "id": session["id"], "expires_at": session["expires_at"]}
+
+
 @assistant_bp.route("/summarize", methods=["POST"])
 def summarize():
-    """Turn a finished session's transcript into notes. Nothing is stored."""
+    """Turn a finished session's transcript into notes, and keep both in History
+    (text only, encrypted, expiring) unless the page sends keep: false."""
     denied = check_access()
     if denied:
         return denied
@@ -269,44 +376,13 @@ def summarize():
     transcript = build_transcript(entries, marks)
     if not transcript.strip() or all("★" in line for line in transcript.splitlines()):
         return jsonify({"error": "Nothing was transcribed in this session"}), 400
-    if len(transcript) > MAX_TRANSCRIPT_CHARS:
-        return jsonify({"error": "Transcript is too long to summarize"}), 413
 
-    try:
-        resp = requests.post(
-            CHAT_COMPLETIONS_URL,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": os.getenv("SUMMARY_MODEL", "gpt-5-mini"),
-                "response_format": {"type": "json_object"},
-                "messages": [
-                    {"role": "system", "content": SUMMARY_INSTRUCTIONS},
-                    {"role": "user", "content": transcript},
-                ],
-            },
-            timeout=90,
-        )
-    except requests.RequestException:
-        return jsonify({"error": "Could not reach the summary service"}), 502
-
-    if not resp.ok:
-        detail = upstream_error_message(resp)
-        # Log the reason only; never the transcript.
-        current_app.logger.error("Summary refused (%s): %s", resp.status_code, detail)
-        return jsonify({"error": f"Summary service refused the request: {detail}"}), 502
-
-    try:
-        content = resp.json()["choices"][0]["message"]["content"]
-        notes = normalize_notes(json.loads(content))
-    except (ValueError, KeyError, IndexError, TypeError):
-        current_app.logger.error("Summary response was not valid JSON notes")
-        return jsonify({"error": "Summary service returned an unreadable result"}), 502
-
-    return jsonify({"notes": notes, "transcript": transcript})
-
+    notes, notes_error = request_notes(transcript)
+    session = save_session(body, transcript, notes)
+    if notes_error:
+        status = 413 if "too long" in notes_error else 502
+        return jsonify({"error": notes_error, "session": session}), status
+    return jsonify({"notes": notes, "transcript": transcript, "session": session})
 
 
 def embedding_model():
@@ -495,7 +571,7 @@ def delete_memory(memory_id):
 
 @assistant_bp.route("/memories/export", methods=["GET"])
 def export_memories():
-    """Download every memory (decrypted) plus the audit log as JSON."""
+    """Download every memory and kept session (decrypted) plus the audit log as JSON."""
     denied = check_access()
     if denied:
         return denied
@@ -506,6 +582,7 @@ def export_memories():
         payload = {
             "exported_at": datetime.now(timezone.utc).isoformat(),
             "memories": store.list(),
+            "sessions": store.export_sessions(),
             "audit": store.audit(limit=10000),
         }
     except Exception as exc:  # noqa: BLE001
@@ -519,7 +596,8 @@ def export_memories():
 
 @assistant_bp.route("/memories/search", methods=["POST"])
 def search_memories():
-    """Find memories by meaning. Also fingerprints any memories saved without one."""
+    """Find memories (and, with include_sessions, past conversations) by meaning.
+    Also fingerprints anything saved without one."""
     denied = check_access()
     if denied:
         return denied
@@ -537,6 +615,7 @@ def search_memories():
         return jsonify({"error": "Unknown category"}), 400
     limit = body.get("limit")
     limit = limit if isinstance(limit, int) and 1 <= limit <= 20 else 6
+    include_sessions = body.get("include_sessions") is True
 
     model = embedding_model()
     try:
@@ -544,11 +623,63 @@ def search_memories():
         if missing:
             vectors = embed([text for _, text in missing])
             store.set_embeddings([(memory_id, v) for (memory_id, _), v in zip(missing, vectors)], model)
+        if include_sessions:
+            missing_sessions = store.missing_session_embeddings(model)
+            if missing_sessions:
+                vectors = embed([session_embedding_text(notes, transcript) for _, notes, transcript in missing_sessions])
+                store.set_session_embeddings([(sid, v) for (sid, _, _), v in zip(missing_sessions, vectors)], model)
         query_vector = embed([query])[0]
-        results = store.search(query_vector, model, category=category, limit=limit)
+        results = store.search(query_vector, model, category=category, limit=limit, include_sessions=include_sessions)
     except EmbeddingError as exc:
         current_app.logger.error("Memory search embedding failed: %s", exc)
         return jsonify({"error": f"Search service unavailable: {exc}"}), 502
     except Exception as exc:  # noqa: BLE001
         return storage_failure(exc)
     return jsonify({"results": results})
+
+
+@assistant_bp.route("/sessions", methods=["GET"])
+def list_sessions():
+    denied = check_access()
+    if denied:
+        return denied
+    store, error = store_or_error()
+    if error:
+        return error
+    try:
+        return jsonify({"sessions": store.list_sessions(), "retention_days": retention_days()})
+    except Exception as exc:  # noqa: BLE001
+        return storage_failure(exc)
+
+
+@assistant_bp.route("/sessions/<int:session_id>", methods=["GET"])
+def get_session(session_id):
+    denied = check_access()
+    if denied:
+        return denied
+    store, error = store_or_error()
+    if error:
+        return error
+    try:
+        return jsonify({"session": store.get_session(session_id)})
+    except MemoryNotFound:
+        return jsonify({"error": "That conversation isn't in History (it may have expired or been deleted)"}), 404
+    except Exception as exc:  # noqa: BLE001
+        return storage_failure(exc)
+
+
+@assistant_bp.route("/sessions/<int:session_id>", methods=["DELETE"])
+def delete_session(session_id):
+    denied = check_access()
+    if denied:
+        return denied
+    store, error = store_or_error()
+    if error:
+        return error
+    try:
+        store.delete_session(session_id)
+    except MemoryNotFound:
+        return jsonify({"error": "That conversation isn't in History"}), 404
+    except Exception as exc:  # noqa: BLE001
+        return storage_failure(exc)
+    return "", 204

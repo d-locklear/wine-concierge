@@ -29,6 +29,8 @@ class FakeStore:
         self.next_id = 1
         self.audit_log = []
         self.embeddings = {}
+        self.sessions = {}
+        self.session_embeddings = {}
 
     def add_many(self, items, source, session_started_at=None, embedding_model=None):
         saved = []
@@ -68,7 +70,37 @@ class FakeStore:
     def set_embeddings(self, pairs, embedding_model):
         self.embeddings.update(dict(pairs))
 
-    def search(self, query_vector, embedding_model, category=None, limit=6, min_score=0.2):
+    def add_session(self, transcript, notes=None, started_at=None, ended_at=None,
+                    embedding=None, embedding_model=None, retention_days=90):
+        sid = len(self.sessions) + 1
+        self.sessions[sid] = {"id": sid, "transcript": transcript, "notes": notes, "retention_days": retention_days,
+                              "started_at": started_at and started_at.isoformat(), "expires_at": "2026-12-25T00:00:00+00:00",
+                              "summary": (notes or {}).get("summary") or "", "has_notes": notes is not None}
+        self.session_embeddings[sid] = embedding
+        return self.sessions[sid]
+
+    def list_sessions(self):
+        return [{k: v for k, v in r.items() if k not in ("transcript", "notes")} for r in reversed(self.sessions.values())]
+
+    def get_session(self, sid):
+        if sid not in self.sessions:
+            raise MemoryNotFound()
+        return self.sessions[sid]
+
+    def delete_session(self, sid):
+        if self.sessions.pop(sid, None) is None:
+            raise MemoryNotFound()
+
+    def missing_session_embeddings(self, embedding_model, limit=200):
+        return [(i, r["notes"], r["transcript"]) for i, r in self.sessions.items() if self.session_embeddings.get(i) is None]
+
+    def set_session_embeddings(self, pairs, embedding_model):
+        self.session_embeddings.update(dict(pairs))
+
+    def export_sessions(self):
+        return list(self.sessions.values())
+
+    def search(self, query_vector, embedding_model, category=None, limit=6, min_score=0.2, include_sessions=False):
         scored = []
         for i, row in self.rows.items():
             vec = self.embeddings.get(i)
@@ -76,7 +108,13 @@ class FakeStore:
                 continue
             score = sum(a * b for a, b in zip(vec, query_vector))
             if score >= min_score:
-                scored.append({**row, "score": score})
+                scored.append({**row, "type": "memory", "score": score})
+        if include_sessions and not category:
+            for i, row in self.sessions.items():
+                vec = self.session_embeddings.get(i)
+                score = sum(a * b for a, b in zip(vec, query_vector)) if vec else 0
+                if score >= min_score:
+                    scored.append({"id": i, "summary": row["summary"], "type": "session", "score": score})
         return sorted(scored, key=lambda r: r["score"], reverse=True)[:limit]
 
 
@@ -281,6 +319,126 @@ def test_search_reports_embedding_failure(client, store):
     assert "no credits" in resp.get_json()["error"]
 
 
+def chat_reply(content):
+    resp = MagicMock(ok=True)
+    resp.json.return_value = {"choices": [{"message": {"content": content}}]}
+    return resp
+
+
+def fake_openai_with_notes(notes_json='{"summary": "Talked corks with the supplier", "decisions": ["Order corks"]}', notes_fail=False):
+    embeddings = fake_openai()
+
+    def post(url, headers=None, json=None, timeout=None):
+        if url.endswith("/chat/completions"):
+            if notes_fail:
+                resp = MagicMock(ok=False, status_code=500)
+                resp.json.return_value = {"error": {"message": "server error"}}
+                return resp
+            return chat_reply(notes_json)
+        return embeddings(url, headers=headers, json=json, timeout=timeout)
+    return post
+
+
+CONVERSATION = {
+    "entries": [{"t": 1000, "speaker": "user", "text": "We need more corks from the supplier."}],
+    "marks": [],
+    "started_at": "2026-09-26T14:00:00.000Z",
+    "ended_at": "2026-09-26T14:05:00.000Z",
+}
+
+
+def test_summarize_keeps_transcript_and_notes_in_history(client, store, monkeypatch):
+    monkeypatch.setenv("SESSION_RETENTION_DAYS", "30")
+    with patch("assistant.routes.requests.post", side_effect=fake_openai_with_notes()):
+        resp = client.post("/assistant/summarize", headers=AUTH, json=CONVERSATION)
+    assert resp.status_code == 200
+    assert resp.get_json()["session"]["saved"] is True
+    kept = store.sessions[1]
+    assert kept["transcript"] == "[00:01] You: We need more corks from the supplier."
+    assert kept["notes"]["decisions"] == ["Order corks"]
+    assert kept["retention_days"] == 30
+    assert kept["started_at"].startswith("2026-09-26T14:00")
+    # Fingerprinted from the notes so voice search can find it.
+    assert store.session_embeddings[1] == fake_vector("Talked corks with the supplier\nOrder corks")
+
+
+def test_summarize_respects_dont_keep(client, store):
+    with patch("assistant.routes.requests.post", side_effect=fake_openai_with_notes()):
+        resp = client.post("/assistant/summarize", headers=AUTH, json={**CONVERSATION, "keep": False})
+    assert resp.status_code == 200
+    assert resp.get_json()["session"]["saved"] is False
+    assert store.sessions == {}
+
+
+def test_transcript_is_kept_even_when_notes_fail(client, store):
+    with patch("assistant.routes.requests.post", side_effect=fake_openai_with_notes(notes_fail=True)):
+        resp = client.post("/assistant/summarize", headers=AUTH, json=CONVERSATION)
+    assert resp.status_code == 502
+    assert resp.get_json()["session"]["saved"] is True
+    assert store.sessions[1]["notes"] is None
+    assert "corks" in store.sessions[1]["transcript"]
+
+
+def test_summarize_without_storage_still_returns_notes(client, monkeypatch):
+    def not_configured():
+        raise StorageNotConfigured()
+    monkeypatch.setattr(routes, "get_store", not_configured)
+    with patch("assistant.routes.requests.post", side_effect=fake_openai_with_notes()):
+        resp = client.post("/assistant/summarize", headers=AUTH, json=CONVERSATION)
+    assert resp.status_code == 200
+    assert resp.get_json()["notes"]["decisions"] == ["Order corks"]
+    assert resp.get_json()["session"] == {"saved": False, "reason": "History storage isn't set up."}
+
+
+def test_history_routes(client, store):
+    store.add_session("[00:01] You: hello", notes={"summary": "Said hello"})
+    listed = client.get("/assistant/sessions", headers=AUTH).get_json()
+    assert listed["sessions"][0]["summary"] == "Said hello"
+    assert "transcript" not in listed["sessions"][0]
+    assert listed["retention_days"] == 90
+    full = client.get("/assistant/sessions/1", headers=AUTH).get_json()["session"]
+    assert full["transcript"] == "[00:01] You: hello"
+    assert client.delete("/assistant/sessions/1", headers=AUTH).status_code == 204
+    assert client.get("/assistant/sessions/1", headers=AUTH).status_code == 404
+    assert client.delete("/assistant/sessions/1", headers=AUTH).status_code == 404
+
+
+def test_history_routes_require_access_code(client, store):
+    assert client.get("/assistant/sessions").status_code == 401
+    assert client.get("/assistant/sessions/1").status_code == 401
+    assert client.delete("/assistant/sessions/1").status_code == 401
+
+
+def test_voice_search_includes_past_conversations_and_backfills_them(client, store, openai):
+    store.add_session("[00:01] You: the cork supplier is late", notes=None)
+    store.add_many([{"text": "Call Mom", "category": "personal", "embedding": fake_vector("mom")}], source="conversation")
+    only_memories = client.post("/assistant/memories/search", headers=AUTH, json={"query": "cork delivery"}).get_json()
+    assert only_memories["results"] == []
+    with_sessions = client.post("/assistant/memories/search", headers=AUTH,
+                                json={"query": "cork delivery", "include_sessions": True}).get_json()
+    assert [(r["type"], r["id"]) for r in with_sessions["results"]] == [("session", 1)]
+    assert store.session_embeddings[1] == fake_vector("[00:01] You: the cork supplier is late")
+
+
+def test_export_includes_sessions(client, store):
+    store.add_session("[00:01] You: hello", notes=None)
+    body = client.get("/assistant/memories/export", headers=AUTH).get_json()
+    assert body["sessions"][0]["transcript"] == "[00:01] You: hello"
+
+
+def test_history_page_served(client):
+    assert b"History" in client.get("/assistant/history").data
+
+
+def test_session_config_offers_read_conversation_tool(client, monkeypatch):
+    upstream = MagicMock(ok=True)
+    upstream.json.return_value = {"value": "ek"}
+    with patch("assistant.routes.requests.post", return_value=upstream) as post:
+        client.post("/assistant/session", headers=AUTH)
+    tools = [t["name"] for t in post.call_args.kwargs["json"]["session"]["tools"]]
+    assert tools == ["search_memories", "read_conversation"]
+
+
 # --- Real Postgres (set TEST_DATABASE_URL to run) ---
 
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
@@ -367,3 +525,45 @@ def test_postgres_search_with_encrypted_embeddings(pg_store):
     assert [text for _, text in store.missing_embeddings("m1")] == ["Call Dad"]
     store.update(saved[0]["id"], text="Bottle Saturday", embedding=fake_vector("bottle"), embedding_model="m1")
     assert [r["text"] for r in store.search(fake_vector("bottle"), "m1")] == ["Bottle Saturday"]
+
+
+@needs_db
+def test_postgres_sessions_are_encrypted_expire_and_are_searchable(pg_store):
+    import psycopg
+    from datetime import datetime, timezone
+    store, url = pg_store
+    start = datetime(2026, 9, 26, 14, 0, tzinfo=timezone.utc)
+    kept = store.add_session(
+        "[00:01] You: the cork supplier is late", notes={"summary": "Cork delay", "decisions": []},
+        started_at=start, embedding=fake_vector("cork"), embedding_model="m1", retention_days=90,
+    )
+    other = store.add_session("[00:01] You: call Mom", notes=None, started_at=start.replace(day=25), embedding_model="m1")
+    assert kept["summary"] == "Cork delay" and kept["has_notes"] is True
+    assert [s["id"] for s in store.list_sessions()] == [kept["id"], other["id"]]
+    full = store.get_session(kept["id"])
+    assert full["transcript"] == "[00:01] You: the cork supplier is late"
+    assert full["notes"]["summary"] == "Cork delay"
+
+    with psycopg.connect(url) as conn:
+        raw = conn.execute("SELECT transcript_encrypted, notes_encrypted FROM sessions").fetchall()
+    assert all(b"cork" not in bytes(r[0]) and (r[1] is None or b"Cork" not in bytes(r[1])) for r in raw)
+
+    assert [i for i, _, _ in store.missing_session_embeddings("m1")] == [other["id"]]
+    store.set_session_embeddings([(other["id"], fake_vector("mom"))], "m1")
+    hits = store.search(fake_vector("cork"), "m1", include_sessions=True)
+    assert [(h["type"], h["id"]) for h in hits] == [("session", kept["id"])]
+    assert store.search(fake_vector("cork"), "m1") == []  # sessions only when asked for
+    assert store.search(fake_vector("cork"), "m1", category="winery", include_sessions=True) == []
+
+    # Expired sessions disappear (and are logged) the next time History is read.
+    with psycopg.connect(url) as conn:
+        conn.execute("UPDATE sessions SET expires_at = now() - interval '1 minute' WHERE id = %s", (other["id"],))
+    assert [s["id"] for s in store.list_sessions()] == [kept["id"]]
+    with pytest.raises(MemoryNotFound):
+        store.get_session(other["id"])
+
+    store.delete_session(kept["id"])
+    with pytest.raises(MemoryNotFound):
+        store.delete_session(kept["id"])
+    session_audit = [(a["action"], a["id"]) for a in store.audit() if a["subject"] == "session"]
+    assert session_audit == [("deleted", kept["id"]), ("expired", other["id"]), ("created", other["id"]), ("created", kept["id"])]
