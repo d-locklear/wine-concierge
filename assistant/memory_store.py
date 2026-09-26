@@ -4,10 +4,14 @@ Memory text is encrypted before it reaches the database, so the database alone
 is unreadable. Embeddings (used for search by meaning) are encrypted too, and
 similarity is computed in the app after decrypting. The audit log records what
 happened to each memory and when, never the memory text itself.
+
+Sessions are the automatic history of past conversations: the transcript text
+and notes (never audio), encrypted the same way and deleted when they expire.
 """
 
 import base64
 import hashlib
+import json
 import os
 import threading
 
@@ -32,12 +36,25 @@ CREATE TABLE IF NOT EXISTS memories (
 CREATE INDEX IF NOT EXISTS memories_category_created_idx ON memories (category, created_at DESC);
 ALTER TABLE memories ADD COLUMN IF NOT EXISTS embedding_encrypted BYTEA;
 ALTER TABLE memories ADD COLUMN IF NOT EXISTS embedding_model TEXT;
+CREATE TABLE IF NOT EXISTS sessions (
+    id BIGSERIAL PRIMARY KEY,
+    started_at TIMESTAMPTZ,
+    ended_at TIMESTAMPTZ,
+    notes_encrypted BYTEA,
+    transcript_encrypted BYTEA NOT NULL,
+    embedding_encrypted BYTEA,
+    embedding_model TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sessions_expires_idx ON sessions (expires_at);
 CREATE TABLE IF NOT EXISTS memory_audit (
     id BIGSERIAL PRIMARY KEY,
     memory_id BIGINT NOT NULL,
     action TEXT NOT NULL,
     at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE memory_audit ADD COLUMN IF NOT EXISTS subject TEXT NOT NULL DEFAULT 'memory';
 """
 
 
@@ -188,34 +205,149 @@ class MemoryStore:
                     (self._encrypt_vector(vector), embedding_model, memory_id),
                 )
 
-    def search(self, query_vector, embedding_model, category=None, limit=6, min_score=0.2):
-        """Rank memories by cosine similarity to query_vector. Returns memories with a "score"."""
+    def search(self, query_vector, embedding_model, category=None, limit=6, min_score=0.2, include_sessions=False):
+        """Rank memories (and optionally past sessions) by cosine similarity to query_vector.
+
+        Results carry "type" ("memory" or "session") and "score". Sessions have no
+        category, so they're left out when a category is given.
+        """
         with self._connect() as conn:
             sql = "SELECT * FROM memories WHERE embedding_model = %s AND embedding_encrypted IS NOT NULL"
             params = [embedding_model]
             if category:
                 sql += " AND category = %s"
                 params.append(category)
-            rows = conn.execute(sql, params).fetchall()
-        if not rows:
+            candidates = [("memory", r) for r in conn.execute(sql, params).fetchall()]
+            if include_sessions and not category:
+                self._purge_expired(conn)
+                candidates += [("session", r) for r in conn.execute(
+                    "SELECT * FROM sessions WHERE embedding_model = %s AND embedding_encrypted IS NOT NULL",
+                    (embedding_model,),
+                ).fetchall()]
+        if not candidates:
             return []
         query = np.asarray(query_vector, dtype=np.float32)
-        matrix = np.stack([self._decrypt_vector(r["embedding_encrypted"]) for r in rows])
+        matrix = np.stack([self._decrypt_vector(r["embedding_encrypted"]) for _, r in candidates])
         norms = np.linalg.norm(matrix, axis=1) * (np.linalg.norm(query) or 1.0)
         scores = matrix @ query / np.where(norms == 0, 1.0, norms)
-        ranked = sorted(zip(scores.tolist(), rows), key=lambda pair: pair[0], reverse=True)
-        return [
-            {**self._row(row), "score": round(score, 3)}
-            for score, row in ranked[:limit]
-            if score >= min_score
-        ]
+        ranked = sorted(zip(scores.tolist(), candidates), key=lambda pair: pair[0], reverse=True)
+        results = []
+        for score, (kind, row) in ranked[:limit]:
+            if score < min_score:
+                continue
+            item = self._row(row) if kind == "memory" else self._session_summary(row)
+            results.append({**item, "type": kind, "score": round(score, 3)})
+        return results
+
+    # --- Sessions: automatic, expiring history of past conversations ---
+
+    def _purge_expired(self, conn):
+        expired = conn.execute("DELETE FROM sessions WHERE expires_at <= now() RETURNING id").fetchall()
+        for row in expired:
+            conn.execute(
+                "INSERT INTO memory_audit (memory_id, action, subject) VALUES (%s, 'expired', 'session')", (row["id"],)
+            )
+
+    def _decrypt_json(self, blob):
+        return json.loads(self._decrypt(blob)) if blob is not None else None
+
+    def _session_summary(self, row):
+        notes = self._decrypt_json(row["notes_encrypted"])
+        return {
+            "id": row["id"],
+            "started_at": iso(row["started_at"]),
+            "ended_at": iso(row["ended_at"]),
+            "created_at": iso(row["created_at"]),
+            "expires_at": iso(row["expires_at"]),
+            "summary": (notes or {}).get("summary") or "",
+            "has_notes": notes is not None,
+        }
+
+    def add_session(self, transcript, notes=None, started_at=None, ended_at=None,
+                    embedding=None, embedding_model=None, retention_days=90):
+        with self._connect() as conn:
+            self._purge_expired(conn)
+            row = conn.execute(
+                """INSERT INTO sessions
+                     (started_at, ended_at, notes_encrypted, transcript_encrypted,
+                      embedding_encrypted, embedding_model, expires_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, now() + make_interval(days => %s)) RETURNING *""",
+                (
+                    started_at, ended_at,
+                    self._encrypt(json.dumps(notes)) if notes is not None else None,
+                    self._encrypt(transcript),
+                    self._encrypt_vector(embedding) if embedding is not None else None,
+                    embedding_model if embedding is not None else None,
+                    retention_days,
+                ),
+            ).fetchone()
+            conn.execute(
+                "INSERT INTO memory_audit (memory_id, action, subject) VALUES (%s, 'created', 'session')", (row["id"],)
+            )
+        return self._session_summary(row)
+
+    def list_sessions(self):
+        with self._connect() as conn:
+            self._purge_expired(conn)
+            rows = conn.execute("SELECT * FROM sessions ORDER BY COALESCE(started_at, created_at) DESC, id DESC").fetchall()
+        return [self._session_summary(r) for r in rows]
+
+    def get_session(self, session_id):
+        with self._connect() as conn:
+            self._purge_expired(conn)
+            row = conn.execute("SELECT * FROM sessions WHERE id = %s", (session_id,)).fetchone()
+        if not row:
+            raise MemoryNotFound()
+        return {
+            **self._session_summary(row),
+            "notes": self._decrypt_json(row["notes_encrypted"]),
+            "transcript": self._decrypt(row["transcript_encrypted"]),
+        }
+
+    def delete_session(self, session_id):
+        with self._connect() as conn:
+            deleted = conn.execute("DELETE FROM sessions WHERE id = %s RETURNING id", (session_id,)).fetchone()
+            if not deleted:
+                raise MemoryNotFound()
+            conn.execute(
+                "INSERT INTO memory_audit (memory_id, action, subject) VALUES (%s, 'deleted', 'session')", (session_id,)
+            )
+
+    def missing_session_embeddings(self, embedding_model, limit=200):
+        """Sessions needing an embedding: [(id, notes or None, transcript)]."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT id, notes_encrypted, transcript_encrypted FROM sessions
+                   WHERE expires_at > now()
+                     AND (embedding_encrypted IS NULL OR embedding_model IS DISTINCT FROM %s)
+                   ORDER BY id LIMIT %s""",
+                (embedding_model, limit),
+            ).fetchall()
+        return [(r["id"], self._decrypt_json(r["notes_encrypted"]), self._decrypt(r["transcript_encrypted"])) for r in rows]
+
+    def set_session_embeddings(self, pairs, embedding_model):
+        with self._connect() as conn:
+            for session_id, vector in pairs:
+                conn.execute(
+                    "UPDATE sessions SET embedding_encrypted = %s, embedding_model = %s WHERE id = %s",
+                    (self._encrypt_vector(vector), embedding_model, session_id),
+                )
+
+    def export_sessions(self):
+        with self._connect() as conn:
+            self._purge_expired(conn)
+            ids = [r["id"] for r in conn.execute("SELECT id FROM sessions ORDER BY id").fetchall()]
+        return [self.get_session(i) for i in ids]
 
     def audit(self, limit=200):
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT memory_id, action, at FROM memory_audit ORDER BY at DESC, id DESC LIMIT %s", (limit,)
+                "SELECT memory_id, action, subject, at FROM memory_audit ORDER BY at DESC, id DESC LIMIT %s", (limit,)
             ).fetchall()
-        return [{"memory_id": r["memory_id"], "action": r["action"], "at": iso(r["at"])} for r in rows]
+        return [
+            {"subject": r["subject"], "id": r["memory_id"], "memory_id": r["memory_id"], "action": r["action"], "at": iso(r["at"])}
+            for r in rows
+        ]
 
 
 def iso(value):

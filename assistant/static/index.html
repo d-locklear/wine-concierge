@@ -79,7 +79,11 @@
     .candidate.saved .kind::after { content: " · saved"; color: #86efac; }
     #save { width: 100%; padding: 14px; border-radius: 10px; border: none; font-size: 16px; font-weight: 700; background: #15803d; color: #fff; }
     #save:disabled { opacity: .45; }
-    .toplink { align-self: flex-end; color: var(--muted); font-weight: 600; text-decoration: none; }
+    .toplinks { align-self: flex-end; display: flex; gap: 16px; }
+    .toplinks a { color: var(--muted); font-weight: 600; text-decoration: none; }
+    .kept { color: var(--muted); font-size: 14px; }
+    #forget { background: transparent; border: none; color: #fca5a5; font: inherit; font-size: 14px; font-weight: 600; padding: 0; align-self: flex-start; display: none; }
+    #forget.shown { display: block; }
     .row { display: flex; gap: 10px; }
     .row button { flex: 1; padding: 14px; border-radius: 10px; border: none; font-size: 16px; font-weight: 600; }
     #copy { background: var(--accent); color: #fff; }
@@ -93,13 +97,17 @@
   </div>
 
   <main>
-    <a class="toplink" href="library">Memories →</a>
+    <nav class="toplinks"><a href="history">History</a><a href="library">Memories</a></nav>
     <button id="toggle" aria-pressed="false">Start</button>
     <button id="interrupt">✋ Interrupt</button>
     <button id="mark" disabled>★ Mark important</button>
     <label class="quiet">
       <input type="checkbox" id="quiet">
       <span>Quiet mode<small>Just take notes. The assistant won't reply.</small></span>
+    </label>
+    <label class="quiet">
+      <input type="checkbox" id="dontkeep">
+      <span>Don't keep this session<small>Nothing is saved to History. Turns off again after each session.</small></span>
     </label>
     <label class="quiet">
       <input type="checkbox" id="headphones">
@@ -111,6 +119,8 @@
       <h3>Session notes</h3>
       <p class="note">Tick what's worth remembering, edit the wording, and pick where it belongs. Nothing is saved until you tap Save.</p>
       <div id="notes"></div>
+      <p class="kept" id="kept"></p>
+      <button id="forget">Delete this conversation from History</button>
       <button id="save" disabled>Save selected</button>
       <div class="row">
         <button id="copy">Copy notes</button>
@@ -148,6 +158,10 @@
     try { headphonesBox.checked = localStorage.getItem("assistantHeadphones") === "1"; } catch (_) {}
     // Transcript items keyed by the Realtime conversation item id.
     let entries = new Map(), marks = [], searches = [], lastNotesText = "", sessionStartedAt = null;
+    let savedSessionId = null;
+    const dontKeepBox = document.getElementById("dontkeep");
+    const keptEl = document.getElementById("kept");
+    const forgetBtn = document.getElementById("forget");
     const CATEGORIES = [["winery", "Winery"], ["projects", "Projects"], ["personal", "Personal"], ["preferences", "Preferences"]];
 
     function fmt(ms) {
@@ -188,7 +202,7 @@
         if (item.kind === "mark") {
           li.append("★ Marked important");
         } else if (item.kind === "search") {
-          li.append(`🔎 Searched memories for "${item.query}": ${item.summary}`);
+          li.append(`🔎 ${item.query}: ${item.summary}`);
         } else {
           li.append(el("span", "who", item.speaker === "assistant" ? "Assistant:" : "You:"));
           if (item.text === null) li.classList.add("pending");
@@ -255,48 +269,70 @@
       if (events?.readyState === "open") events.send(JSON.stringify(event));
     }
 
-    // The assistant asked to search memories: run it, hand back the results, and let her answer.
-    async function runToolCall(call) {
-      let output;
-      const search = { t: now(), query: "", summary: "searching…" };
-      try {
-        const args = JSON.parse(call.arguments || "{}");
-        search.query = args.query || "";
-        searches.push(search);
-        renderTranscript();
-        if (call.name !== "search_memories") throw new Error(`Unknown tool ${call.name}`);
-        const resp = await fetch("memories/search", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "X-Access-Code": accessCode },
-          body: JSON.stringify({ query: args.query, category: args.category }),
-        });
-        const data = await resp.json();
-        if (!resp.ok) throw new Error(data.error || "Search failed");
-        search.summary = data.results.length ? `${data.results.length} found` : "nothing found";
-        output = {
-          results: data.results.map((m) => ({
-            memory: m.text,
-            category: m.category,
-            from: (m.session_started_at || m.created_at || "").slice(0, 10),
-            relevance: m.score,
-          })),
-        };
-      } catch (err) {
-        search.summary = `failed (${err.message})`;
-        output = { error: `Memory search is unavailable: ${err.message}` };
-      }
+    function when(iso) {
+      return (iso || "").slice(0, 10);
+    }
+
+    async function postJSON(path, body) {
+      const resp = await fetch(path, {
+        method: body === undefined ? "GET" : "POST",
+        headers: { "Content-Type": "application/json", "X-Access-Code": accessCode },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+      return data;
+    }
+
+    // Run one tool the assistant asked for and return what to hand back to her.
+    async function runTool(call) {
+      const args = JSON.parse(call.arguments || "{}");
+      const line = { t: now(), query: "", summary: "working…" };
+      searches.push(line);
       renderTranscript();
-      sendEvent({ type: "conversation.item.create", item: { type: "function_call_output", call_id: call.call_id, output: JSON.stringify(output) } });
+      try {
+        if (call.name === "search_memories") {
+          line.query = `Searched for "${args.query || ""}"`;
+          const data = await postJSON("memories/search", { query: args.query, category: args.category, include_sessions: true });
+          line.summary = data.results.length ? `${data.results.length} found` : "nothing found";
+          return {
+            results: data.results.map((r) => r.type === "session"
+              ? { type: "past conversation", session_id: r.id, date: when(r.started_at || r.created_at), notes_summary: r.summary, relevance: r.score }
+              : { type: "memory", memory: r.text, category: r.category, date: when(r.session_started_at || r.created_at), relevance: r.score }),
+          };
+        }
+        if (call.name === "read_conversation") {
+          line.query = "Read a past conversation";
+          const { session } = await postJSON(`sessions/${Number(args.session_id)}`);
+          line.summary = `from ${when(session.started_at || session.created_at)}`;
+          return { date: when(session.started_at || session.created_at), notes: session.notes, transcript: session.transcript.slice(0, 20000) };
+        }
+        throw new Error(`Unknown tool ${call.name}`);
+      } catch (err) {
+        line.summary = `failed (${err.message})`;
+        return { error: `That lookup failed: ${err.message}` };
+      } finally {
+        renderTranscript();
+      }
+    }
+
+    // Hand every tool result back, then ask for one reply that uses them.
+    async function runToolCalls(calls) {
+      const outputs = await Promise.all(calls.map(runTool));
+      calls.forEach((call, i) => sendEvent({
+        type: "conversation.item.create",
+        item: { type: "function_call_output", call_id: call.call_id, output: JSON.stringify(outputs[i]) },
+      }));
       sendEvent({ type: "response.create" });
     }
 
     function handleEvent(evt) {
       switch (evt.type) {
-        case "response.done":
-          (evt.response?.output || [])
-            .filter((item) => item.type === "function_call")
-            .forEach(runToolCall);
+        case "response.done": {
+          const calls = (evt.response?.output || []).filter((item) => item.type === "function_call");
+          if (calls.length) runToolCalls(calls);
           break;
+        }
         case "output_audio_buffer.started":
           setSpeaking(true);
           break;
@@ -432,20 +468,41 @@
       toggleBtn.disabled = false;
     }
 
+    function showKept(session) {
+      savedSessionId = session?.saved ? session.id : null;
+      forgetBtn.classList.toggle("shown", Boolean(savedSessionId));
+      if (session?.saved) {
+        const until = new Date(session.expires_at).toLocaleDateString([], { month: "long", day: "numeric" });
+        keptEl.textContent = `Transcript and notes kept in History until ${until}.`;
+      } else {
+        keptEl.textContent = session ? `Not kept in History: ${session.reason}` : "";
+      }
+    }
+
     async function summarizeSession(message) {
+      const keep = !dontKeepBox.checked;
       messageEl.textContent = "Microphone off. Writing your notes…";
       try {
         const resp = await fetch("summarize", {
           method: "POST",
           headers: { "Content-Type": "application/json", "X-Access-Code": accessCode },
-          body: JSON.stringify({ entries: [...entries.values()], marks }),
+          body: JSON.stringify({
+            entries: [...entries.values()], marks, keep,
+            started_at: sessionStartedAt, ended_at: new Date().toISOString(),
+          }),
         });
         const data = await resp.json();
-        if (!resp.ok) throw new Error(data.error || "Could not write notes");
+        if (!resp.ok) {
+          const kept = data.session?.saved ? " The transcript was still saved to History." : "";
+          throw new Error((data.error || "Could not write notes") + kept);
+        }
         showNotes(data.notes);
+        showKept(data.session);
         messageEl.textContent = message || "Stopped. The microphone is off.";
       } catch (err) {
         messageEl.textContent = `Microphone off. Notes failed: ${err.message}`;
+      } finally {
+        dontKeepBox.checked = false;
       }
     }
 
@@ -547,6 +604,7 @@
       searches = [];
       lastNotesText = "";
       sessionStartedAt = null;
+      showKept(null);
       notesEl.replaceChildren();
       reviewEl.classList.remove("shown");
       renderTranscript();
@@ -574,9 +632,23 @@
         messageEl.textContent = "Couldn't copy automatically. Select the notes and copy them.";
       }
     });
+    forgetBtn.addEventListener("click", async () => {
+      if (!savedSessionId || !confirm("Delete this conversation's transcript and notes from History?")) return;
+      try {
+        const resp = await fetch(`sessions/${savedSessionId}`, { method: "DELETE", headers: { "X-Access-Code": accessCode } });
+        if (!resp.ok && resp.status !== 404) throw new Error(`HTTP ${resp.status}`);
+        showKept(null);
+        keptEl.textContent = "Deleted from History.";
+      } catch (err) {
+        messageEl.textContent = `Couldn't delete: ${err.message}`;
+      }
+    });
     document.getElementById("discard").addEventListener("click", () => {
+      const kept = savedSessionId !== null;
       discard();
-      messageEl.textContent = "Discarded. Nothing was saved.";
+      messageEl.textContent = kept
+        ? "Cleared from the screen. The conversation is still in History."
+        : "Discarded. Nothing was saved.";
     });
   </script>
 </body>

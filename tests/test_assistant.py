@@ -229,5 +229,5 @@ def test_session_gives_the_assistant_a_memory_search_tool(client, monkeypatch):
     with patch("assistant.routes.requests.post", return_value=upstream) as post:
         client.post("/assistant/session", headers=AUTH)
     session = post.call_args.kwargs["json"]["session"]
-    assert [t["name"] for t in session["tools"]] == ["search_memories"]
+    assert [t["name"] for t in session["tools"]] == ["search_memories", "read_conversation"]
     assert "search_memories" in session["instructions"]

@@ -9,6 +9,7 @@ Confirmed 2026-09-25. These answer the "Decisions needed" section of [PROJECT_BR
 | Interim capture device | Test Plaud before Bee | Better long-duration, speaker-labeled capture; used for learning, not as the product. |
 | Storage approach | Hybrid | Raw audio stays on the device and is discarded after processing; approved summaries and memories go to an encrypted backend for search. |
 | First integration | Calendar and reminders | Part of the success definition and low risk. |
+| Session history | Keep every session's transcript (text) and notes automatically for 90 days | Decided 2026-09-26. Recall shouldn't depend on remembering to save. Audio is never kept. A per-session "Don't keep this session" switch opts out; expired sessions are deleted automatically; anything worth keeping longer is saved as a memory. |
 | Working name and personality | Open | Placeholder persona: a concise, trusted chief of staff who knows winemaking. |
 
 ## Implementation notes
@@ -16,6 +17,7 @@ Confirmed 2026-09-25. These answer the "Decisions needed" section of [PROJECT_BR
 - The backend lives in this repo's Flask app (`assistant/` blueprint), which keeps API credentials server-side.
 - Voice uses the OpenAI Realtime API over WebRTC, matching the existing OpenAI setup. The browser receives only a short-lived client secret.
 - Memories live in Render Postgres (`DATABASE_URL`). Memory text is encrypted with a key derived from `MEMORY_ENCRYPTION_KEY`; losing or changing that key makes saved memories unreadable, so keep a copy somewhere safe. Search embeddings are encrypted the same way and compared in the app after decrypting, which is fine up to several thousand memories; beyond that, move to pgvector.
+- Sessions (History page at `/assistant/history`) are encrypted like memories and expire after `SESSION_RETENTION_DAYS` (default 90). The voice assistant can search them alongside memories and read a past conversation's transcript.
 - Step 1 ships as a mobile web page (works in iPhone Safari) to test the voice loop before building a native app.
 
 ## Prototype progress

@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#1c1917">
+  <title>History</title>
+  <style>
+    :root {
+      --bg: #1c1917; --fg: #f5f5f4; --muted: #a8a29e; --card: #292524;
+      --idle: #57534e; --accent: #7c2d12; --danger: #b91c1c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; background: var(--bg); color: var(--fg);
+      font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      padding: env(safe-area-inset-top) 16px env(safe-area-inset-bottom);
+    }
+    main { max-width: 480px; margin: 0 auto; padding: 16px 0 40px; display: flex; flex-direction: column; gap: 16px; }
+    header { display: flex; justify-content: space-between; align-items: center; }
+    header h1 { margin: 0; font-size: 24px; }
+    nav { display: flex; gap: 16px; }
+    a { color: var(--muted); font-weight: 600; text-decoration: none; }
+    #message { color: var(--muted); min-height: 1.4em; }
+    .intro { color: var(--muted); font-size: 14px; margin: 0; }
+    ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 10px; }
+    li.session { background: var(--card); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 6px; cursor: pointer; }
+    .meta { font-size: 13px; color: var(--muted); }
+    .expiry { font-size: 12px; color: var(--muted); }
+    .detail { display: flex; flex-direction: column; gap: 12px; }
+    .detail h2 { margin: 0; font-size: 20px; }
+    .detail h3 { margin: 8px 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+    .note { background: var(--card); border-radius: 10px; padding: 10px 12px; display: flex; gap: 10px; align-items: flex-start; justify-content: space-between; }
+    .note button {
+      flex: none; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--idle);
+      background: transparent; color: var(--fg); font: inherit; font-size: 14px; font-weight: 600;
+    }
+    .note button:disabled { color: #86efac; border-color: transparent; }
+    select { font: inherit; padding: 6px 8px; border-radius: 8px; background: var(--card); color: var(--fg); border: 1px solid var(--idle); }
+    .transcript { white-space: pre-wrap; background: var(--card); border-radius: 10px; padding: 12px; font-size: 15px; }
+    details summary { cursor: pointer; font-weight: 600; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .actions button {
+      padding: 10px 14px; border-radius: 8px; border: 1px solid var(--idle);
+      background: transparent; color: var(--fg); font: inherit; font-weight: 600;
+    }
+    .actions button.danger { color: #fca5a5; border-color: var(--danger); }
+    .empty { color: var(--muted); text-align: center; padding: 24px 0; }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>History</h1>
+      <nav><a href="./">Assistant</a><a href="library">Memories</a></nav>
+    </header>
+    <p class="intro" id="intro">Transcripts and notes from recent conversations, kept as text only (never audio) and deleted automatically when they expire.</p>
+    <div id="message" role="status" aria-live="polite">Loading…</div>
+    <div id="view"></div>
+  </main>
+
+  <script>
+    const CATEGORIES = [["winery", "Winery"], ["projects", "Projects"], ["personal", "Personal"], ["preferences", "Preferences"]];
+    const viewEl = document.getElementById("view");
+    const messageEl = document.getElementById("message");
+    let accessCode = null;
+
+    function el(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    async function api(path, options = {}) {
+      try { accessCode = accessCode || localStorage.getItem("assistantAccessCode"); } catch (_) {}
+      if (!accessCode) accessCode = prompt("Access code");
+      if (!accessCode) throw new Error("An access code is needed.");
+      const resp = await fetch(path, {
+        ...options,
+        headers: { "Content-Type": "application/json", "X-Access-Code": accessCode },
+      });
+      if (resp.status === 401) {
+        try { localStorage.removeItem("assistantAccessCode"); } catch (_) {}
+        accessCode = null;
+      } else if (resp.ok) {
+        try { localStorage.setItem("assistantAccessCode", accessCode); } catch (_) {}
+      }
+      if (resp.status === 204) return null;
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+      return data;
+    }
+
+    function when(iso) {
+      return iso ? new Date(iso).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+    }
+
+    function duration(session) {
+      if (!session.started_at || !session.ended_at) return "";
+      const minutes = Math.max(1, Math.round((new Date(session.ended_at) - new Date(session.started_at)) / 60000));
+      return minutes >= 60 ? `${Math.floor(minutes / 60)} h ${minutes % 60} min` : `${minutes} min`;
+    }
+
+    function daysLeft(session) {
+      const days = Math.ceil((new Date(session.expires_at) - Date.now()) / 86400000);
+      return days <= 1 ? "Deleted tomorrow" : `Deleted in ${days} days`;
+    }
+
+    async function showList() {
+      history.replaceState(null, "", location.pathname);
+      messageEl.textContent = "Loading…";
+      try {
+        const data = await api("sessions");
+        document.getElementById("intro").textContent =
+          `Transcripts and notes from recent conversations, kept as text only (never audio) and deleted automatically after ${data.retention_days} days. Save anything worth keeping longer as a memory.`;
+        if (!data.sessions.length) {
+          viewEl.replaceChildren(el("p", "empty", "No conversations kept yet. They appear here after you tap Stop."));
+        } else {
+          const list = el("ul");
+          list.append(...data.sessions.map((session) => {
+            const li = el("li", "session");
+            li.append(
+              el("div", "meta", [when(session.started_at || session.created_at), duration(session)].filter(Boolean).join(" · ")),
+              el("div", "", session.summary || (session.has_notes ? "No summary." : "Transcript only (notes weren't written).")),
+              el("div", "expiry", daysLeft(session)),
+            );
+            li.addEventListener("click", () => showSession(session.id));
+            return li;
+          }));
+          viewEl.replaceChildren(list);
+        }
+        messageEl.textContent = `${data.sessions.length} ${data.sessions.length === 1 ? "conversation" : "conversations"}`;
+      } catch (err) {
+        viewEl.replaceChildren();
+        messageEl.textContent = err.message;
+      }
+    }
+
+    function noteRow(text, getCategory) {
+      const row = el("div", "note");
+      const save = el("button", "", "＋ Memory");
+      save.addEventListener("click", async () => {
+        save.disabled = true;
+        try {
+          await api("memories", { method: "POST", body: JSON.stringify({ memories: [{ text, category: getCategory() }] }) });
+          save.textContent = "Saved ✓";
+          messageEl.textContent = "Saved as a memory. It won't expire.";
+        } catch (err) {
+          save.disabled = false;
+          messageEl.textContent = `Not saved: ${err.message}`;
+        }
+      });
+      row.append(el("span", "", text), save);
+      return row;
+    }
+
+    async function showSession(id) {
+      history.replaceState(null, "", `${location.pathname}#${id}`);
+      messageEl.textContent = "Opening…";
+      try {
+        const { session } = await api(`sessions/${id}`);
+        const notes = session.notes;
+        const back = el("a", "", "← All conversations");
+        back.href = "#";
+        back.addEventListener("click", (e) => { e.preventDefault(); showList(); });
+
+        const detail = el("div", "detail");
+        detail.append(back, el("h2", "", when(session.started_at || session.created_at)),
+          el("div", "meta", [duration(session), daysLeft(session)].filter(Boolean).join(" · ")));
+
+        if (notes) {
+          const select = el("select");
+          CATEGORIES.forEach(([value, name]) => { const o = el("option", "", name); o.value = value; select.append(o); });
+          select.value = notes.category || "winery";
+          const picker = el("label", "meta", "Save memories to ");
+          picker.append(select);
+          if (!notes.summary) detail.append(el("p", "meta", "No summary."));
+          detail.append(picker);
+          const action = (a) => a.task + (a.owner ? ` (${a.owner})` : "") + (a.due ? `, due ${a.due}` : "");
+          const sections = [
+            ["Decisions", (notes.decisions || []).map((d) => `Decided: ${d}`)],
+            ["Action items", (notes.action_items || []).map((a) => `To do: ${action(a)}`)],
+            ["Promises", (notes.promises || []).map((p) => `Promised: ${p}`)],
+            ["Open questions", (notes.questions || []).map((q) => `Open question: ${q}`)],
+            ["Marked moments", (notes.important_moments || []).map((m) => m.note)],
+          ];
+          if (notes.summary) sections.unshift(["Summary", [notes.summary]]);
+          sections.forEach(([title, items]) => {
+            if (!items.length) return;
+            detail.append(el("h3", "", title), ...items.map((text) => noteRow(text, () => select.value)));
+          });
+        } else {
+          detail.append(el("p", "meta", "Notes weren't written for this conversation, but the transcript was kept."));
+        }
+
+        const transcript = el("details");
+        transcript.open = !notes;
+        transcript.append(el("summary", "", "Full transcript"), el("div", "transcript", session.transcript));
+        detail.append(transcript);
+
+        const actions = el("div", "actions");
+        const del = el("button", "danger", "Delete this conversation");
+        del.addEventListener("click", async () => {
+          if (!confirm("Delete this conversation's transcript and notes? Memories you saved from it are kept.")) return;
+          try {
+            await api(`sessions/${id}`, { method: "DELETE" });
+            await showList();
+            messageEl.textContent = "Deleted.";
+          } catch (err) {
+            messageEl.textContent = `Not deleted: ${err.message}`;
+          }
+        });
+        actions.append(del);
+        detail.append(actions);
+        viewEl.replaceChildren(detail);
+        messageEl.textContent = "";
+        window.scrollTo(0, 0);
+      } catch (err) {
+        messageEl.textContent = err.message;
+      }
+    }
+
+    const opened = Number(location.hash.slice(1));
+    if (opened) showSession(opened); else showList();
+  </script>
+</body>
+</html>
