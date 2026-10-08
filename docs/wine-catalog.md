@@ -3,7 +3,7 @@
 The customer concierge now supports a catalog in `wine_concierge.wines`, separate
 from the private assistant's memories, sessions, encryption keys and audit tables.
 `wine_concierge.catalog_imports` records each committed import and its checksum.
-This change prepares a migration; it does not itself import the production database.
+Imports are explicit: use the CLI or enable the deployment bootstrap flag below.
 
 ## Source and review
 
@@ -42,7 +42,13 @@ The default only validates the file. It needs no database or API credentials.
 1. Merge this change and make the updated source available on the Render service.
    Keep `WINE_CATALOG_SOURCE=google_sheets` during staging so recommendations
    continue to use the existing source until the Postgres import is verified.
-2. In a Render shell with the service's existing `DATABASE_URL`, run:
+2. Set `WINE_CATALOG_BOOTSTRAP=1` before deploying the updated app. On worker
+   startup, it imports the bundled portfolio using the service's existing
+   `DATABASE_URL`. The schema and rows are verified atomically before commit;
+   failure stops the new worker with a sanitized error. Concurrent workers
+   serialize imports. A committed checksum and all 13 slugs cause subsequent
+   starts to skip the import, preserving later edits. Disable the flag after
+   confirming the import. Alternatively, in a Render shell run:
 
    ```bash
    python import_wine_catalog.py data/wine_catalog_2026.json --apply
@@ -55,7 +61,8 @@ The default only validates the file. It needs no database or API credentials.
 3. Compare the 13 source wines with `Locklear Wine Data`. Add any missing current
    wines with approved source details. Populate confirmed retail prices (integer
    cents), approved HTTPS winery/Vinoshipper product links and availability as needed.
-4. Set `WINE_CATALOG_SOURCE=postgres` and restart the service.
+4. Set `WINE_CATALOG_SOURCE=postgres`, `WINE_CATALOG_BOOTSTRAP=0`, and restart
+   the service after verifying the database and reconciling the legacy Sheet.
 5. Check `/health` for `ready`, `catalog_source: postgres`, and the expected count;
    check `/wines` for all active records. Check `/ask` with peach, barbecue,
    tropical wine, holiday wine and dry-wine requests. Verify the actual model

@@ -7,9 +7,10 @@ from flask_cors import CORS
 from openai import OpenAI
 
 from assistant import assistant_bp
-from wine_catalog import CatalogUnavailable, catalog_source, load_catalog
+from wine_catalog import CatalogUnavailable, bootstrap_catalog, catalog_source, load_catalog
 
 load_dotenv()
+bootstrap_catalog()
 app = Flask(__name__)
 CORS(app)
 app.register_blueprint(assistant_bp)

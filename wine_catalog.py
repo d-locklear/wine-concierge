@@ -130,13 +130,24 @@ def database_url():
     return url
 
 
-def import_catalog(document):
+def import_catalog(document, *, skip_if_imported=False):
     """Validate first, then atomically upsert and verify. Never delete absent wines."""
     items = validate_catalog(document)
     checksum = hashlib.sha256(json.dumps(items, sort_keys=True, allow_nan=False).encode()).hexdigest()
     with psycopg.connect(database_url(), connect_timeout=10, row_factory=dict_row, prepare_threshold=None) as conn:
         conn.execute(SCHEMA)
         conn.execute('LOCK TABLE wine_concierge.wines IN SHARE ROW EXCLUSIVE MODE')
+        if skip_if_imported:
+            previous = conn.execute(
+                'SELECT id FROM wine_concierge.catalog_imports WHERE content_sha256 = %s LIMIT 1',
+                (checksum,),
+            ).fetchone()
+            present = conn.execute(
+                'SELECT slug FROM wine_concierge.wines WHERE slug = ANY(%s)',
+                ([w['slug'] for w in items],),
+            ).fetchall()
+            if previous and len(present) == len(items):
+                return {'imported': 0, 'verified': len(items), 'sha256': checksum}
         for item in items:
             conn.execute(
                 """INSERT INTO wine_concierge.wines (slug, data) VALUES (%s, %s)
@@ -159,6 +170,19 @@ def import_catalog(document):
             (checksum, len(items), Jsonb(sorted({w['source_document'] for w in items}))),
         )
     return {'imported': len(items), 'verified': len(items), 'sha256': checksum}
+
+
+def bootstrap_catalog():
+    """Opt-in deployment migration using the service's existing database credentials."""
+    if os.getenv('WINE_CATALOG_BOOTSTRAP') != '1':
+        return None
+    from pathlib import Path
+    try:
+        path = Path(__file__).resolve().parent / 'data/wine_catalog_2026.json'
+        return import_catalog(json.loads(path.read_text()), skip_if_imported=True)
+    except Exception:
+        # Fail the new worker without exposing connection strings or credentials.
+        raise RuntimeError('Wine catalog deployment import failed') from None
 
 
 def load_postgres_catalog():

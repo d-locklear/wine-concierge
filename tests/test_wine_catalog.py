@@ -54,6 +54,58 @@ def test_rejects_duplicates_before_connecting(portfolio):
     connect.assert_not_called()
 
 
+def test_bootstrap_requires_explicit_opt_in(monkeypatch):
+    monkeypatch.delenv('WINE_CATALOG_BOOTSTRAP', raising=False)
+    with patch.object(catalog, 'import_catalog') as importer:
+        assert catalog.bootstrap_catalog() is None
+    importer.assert_not_called()
+
+
+def test_bootstrap_imports_bundled_portfolio_once(monkeypatch, portfolio):
+    monkeypatch.setenv('WINE_CATALOG_BOOTSTRAP', '1')
+    with patch.object(catalog, 'import_catalog', return_value={'verified': 13}) as importer:
+        assert catalog.bootstrap_catalog() == {'verified': 13}
+    importer.assert_called_once_with(portfolio, skip_if_imported=True)
+
+
+def test_bootstrap_failure_hides_credentials(monkeypatch):
+    monkeypatch.setenv('WINE_CATALOG_BOOTSTRAP', '1')
+    with patch.object(catalog, 'import_catalog', side_effect=RuntimeError('secret-db-password')):
+        with pytest.raises(RuntimeError, match='deployment import failed') as failure:
+            catalog.bootstrap_catalog()
+    assert 'secret' not in str(failure.value)
+    assert failure.value.__suppress_context__
+
+
+def test_completed_bootstrap_does_not_overwrite_later_edits(monkeypatch, portfolio):
+    monkeypatch.setenv('WINE_DATABASE_URL', 'postgresql://unused')
+    conn = MagicMock()
+    conn.execute.side_effect = [
+        MagicMock(), MagicMock(),
+        MagicMock(fetchone=lambda: {'id': 1}),
+        MagicMock(fetchall=lambda: [{'slug': w['slug']} for w in portfolio['wines']]),
+    ]
+    with patch.object(catalog.psycopg, 'connect') as connect:
+        connect.return_value.__enter__.return_value = conn
+        assert catalog.import_catalog(portfolio, skip_if_imported=True)['imported'] == 0
+    assert not any('INSERT' in call.args[0] for call in conn.execute.call_args_list)
+
+
+def test_missing_bootstrap_record_is_restored(monkeypatch, portfolio):
+    monkeypatch.setenv('WINE_DATABASE_URL', 'postgresql://unused')
+    conn = MagicMock()
+    conn.execute.side_effect = [
+        MagicMock(), MagicMock(), MagicMock(fetchone=lambda: {'id': 1}),
+        MagicMock(fetchall=lambda: []),
+        *[MagicMock() for _ in portfolio['wines']],
+        MagicMock(fetchall=lambda: [{'slug': w['slug'], 'data': w} for w in portfolio['wines']]),
+        MagicMock(),
+    ]
+    with patch.object(catalog.psycopg, 'connect') as connect:
+        connect.return_value.__enter__.return_value = conn
+        assert catalog.import_catalog(portfolio, skip_if_imported=True)['imported'] == 13
+
+
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setenv('WINE_CATALOG_SOURCE', 'postgres')
