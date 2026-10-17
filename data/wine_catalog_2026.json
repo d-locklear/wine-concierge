@@ -14,7 +14,9 @@
       "source_document": "Locklear_Winery_Wine_Portfolio.pdf",
       "source_version": "1",
       "source_page": 1,
-      "flavor_profile": "50% Blueberry + 50% Peach"
+      "flavor_profile": "50% Blueberry + 50% Peach",
+      "availability": "available",
+      "active": true
     },
     {
       "slug": "christmas-in-a-bottle",
@@ -31,7 +33,9 @@
       "source_version": "1",
       "source_page": 2,
       "wine_type": "Grape wine with natural flavors",
-      "tasting_notes": "APPEARANCE Deep ruby red with bright, shimmering clarity. AROMA Cinnamon, clove and orange zest, with hints of vanilla and dried fruit. TASTE Sweet red berries, warm holiday spices and a touch of citrus. Smooth and velvety with a comforting vanilla-spice finish."
+      "tasting_notes": "APPEARANCE Deep ruby red with bright, shimmering clarity. AROMA Cinnamon, clove and orange zest, with hints of vanilla and dried fruit. TASTE Sweet red berries, warm holiday spices and a touch of citrus. Smooth and velvety with a comforting vanilla-spice finish.",
+      "availability": "unavailable",
+      "active": true
     },
     {
       "slug": "peach",
@@ -48,7 +52,9 @@
       "source_version": "1",
       "source_page": 3,
       "wine_type": "Peach fruit wine",
-      "tasting_notes": "APPEARANCE Clear, pale golden color with soft peach highlights. AROMA Fresh, ripe peach aromas with delicate floral notes. TASTE Juicy peach flavor with natural sweetness and light acidity. Smooth and refreshing with a clean, lingering peach finish."
+      "tasting_notes": "APPEARANCE Clear, pale golden color with soft peach highlights. AROMA Fresh, ripe peach aromas with delicate floral notes. TASTE Juicy peach flavor with natural sweetness and light acidity. Smooth and refreshing with a clean, lingering peach finish.",
+      "availability": "available",
+      "active": true
     },
     {
       "slug": "strawberry",
@@ -65,7 +71,9 @@
       "source_version": "1",
       "source_page": 4,
       "wine_type": "Strawberry fruit wine",
-      "tasting_notes": "APPEARANCE Clear, rosy red color with bright ruby highlights. AROMA Fresh, ripe strawberry aromas with a delicate floral lift. TASTE Juicy strawberry flavor with natural sweetness and gentle acidity. Smooth and refreshing with a clean berry finish."
+      "tasting_notes": "APPEARANCE Clear, rosy red color with bright ruby highlights. AROMA Fresh, ripe strawberry aromas with a delicate floral lift. TASTE Juicy strawberry flavor with natural sweetness and gentle acidity. Smooth and refreshing with a clean berry finish.",
+      "availability": "available",
+      "active": true
     },
     {
       "slug": "blackberry",
@@ -82,7 +90,9 @@
       "source_version": "1",
       "source_page": 5,
       "wine_type": "Blackberry fruit wine",
-      "tasting_notes": "APPEARANCE Deep ruby-purple with bright, clear highlights. AROMA Inviting aromas of ripe blackberries with a hint of dark fruit. TASTE Juicy blackberry flavor with balanced sweetness and gentle acidity. Smooth and rich with a lingering berry finish."
+      "tasting_notes": "APPEARANCE Deep ruby-purple with bright, clear highlights. AROMA Inviting aromas of ripe blackberries with a hint of dark fruit. TASTE Juicy blackberry flavor with balanced sweetness and gentle acidity. Smooth and rich with a lingering berry finish.",
+      "availability": "available",
+      "active": true
     },
     {
       "slug": "blueberry",
@@ -99,7 +109,9 @@
       "source_version": "1",
       "source_page": 6,
       "wine_type": "Blueberry fruit wine",
-      "tasting_notes": "APPEARANCE Deep ruby-violet with bright, clear highlights. AROMA Inviting aromas of ripe blueberries with a hint of fresh fruit. TASTE Juicy blueberry flavor with balanced sweetness and gentle acidity. Smooth and refreshing with a lingering berry finish."
+      "tasting_notes": "APPEARANCE Deep ruby-violet with bright, clear highlights. AROMA Inviting aromas of ripe blueberries with a hint of fresh fruit. TASTE Juicy blueberry flavor with balanced sweetness and gentle acidity. Smooth and refreshing with a lingering berry finish.",
+      "availability": "available",
+      "active": true
     },
     {
       "slug": "autumn-in-a-bottle",
@@ -116,7 +128,9 @@
       "source_version": "1",
       "source_page": 7,
       "wine_type": "Grape wine with natural flavors",
-      "tasting_notes": "APPEARANCE Deep ruby red with warm garnet highlights. AROMA Inviting aromas of cinnamon, nutmeg and clove with ripe grape fruit. TASTE Sweet, smooth grape flavor layered with warm baking spices and a soft, lingering pumpkin-spice finish."
+      "tasting_notes": "APPEARANCE Deep ruby red with warm garnet highlights. AROMA Inviting aromas of cinnamon, nutmeg and clove with ripe grape fruit. TASTE Sweet, smooth grape flavor layered with warm baking spices and a soft, lingering pumpkin-spice finish.",
+      "availability": "unavailable",
+      "active": true
     },
     {
       "slug": "lumbee-river-red",
@@ -133,7 +147,9 @@
       "source_version": "1",
       "source_page": 8,
       "tasting_notes": "APPEARANCE Deep ruby red with bright, clear highlights. AROMA Inviting aromas of ripe blueberry, blackberry and strawberry. TASTE Juicy mixed-berry flavor with balanced sweetness and gentle acidity. Smooth and refreshing with a lingering fruit finish.",
-      "review_notes": "Source heading says sweet fruit wine; TYPE says red table wine. Confirm product classification before publishing it."
+      "review_notes": "Source heading says sweet fruit wine; TYPE says red table wine. Confirm product classification before publishing it.",
+      "availability": "available",
+      "active": true
     },
     {
       "slug": "white-sangria",
@@ -150,7 +166,9 @@
       "source_version": "1",
       "source_page": 9,
       "wine_type": "Fruit wine with natural flavors",
-      "tasting_notes": "APPEARANCE Bright golden yellow with clear, sunny highlights. AROMA Inviting aromas of ripe pineapple and juicy mango. TASTE Sweet tropical fruit flavors with a lively, refreshing finish that is smooth and easy to enjoy."
+      "tasting_notes": "APPEARANCE Bright golden yellow with clear, sunny highlights. AROMA Inviting aromas of ripe pineapple and juicy mango. TASTE Sweet tropical fruit flavors with a lively, refreshing finish that is smooth and easy to enjoy.",
+      "availability": "available",
+      "active": true
     },
     {
       "slug": "carolina-crisp",
@@ -167,7 +185,9 @@
       "source_version": "1",
       "source_page": 10,
       "wine_type": "Apple wine",
-      "tasting_notes": "APPEARANCE Clear, pale gold with bright straw highlights. AROMA Fresh apple aromas with hints of orchard blossom. TASTE Juicy apple flavor with balanced sweetness and light acidity. Smooth and refreshing with a clean, crisp finish."
+      "tasting_notes": "APPEARANCE Clear, pale gold with bright straw highlights. AROMA Fresh apple aromas with hints of orchard blossom. TASTE Juicy apple flavor with balanced sweetness and light acidity. Smooth and refreshing with a clean, crisp finish.",
+      "availability": "available",
+      "active": true
     },
     {
       "slug": "noble-sweet",
@@ -184,7 +204,9 @@
       "source_version": "1",
       "source_page": 11,
       "wine_type": "Noble muscadine",
-      "tasting_notes": "APPEARANCE Deep ruby-purple with bright clarity. AROMA Ripe dark grapes with gentle berry and floral notes. TASTE Sweet, full grape flavor with soft acidity and a smooth, fruit-forward finish."
+      "tasting_notes": "APPEARANCE Deep ruby-purple with bright clarity. AROMA Ripe dark grapes with gentle berry and floral notes. TASTE Sweet, full grape flavor with soft acidity and a smooth, fruit-forward finish.",
+      "availability": "available",
+      "active": true
     },
     {
       "slug": "carlos-sweet",
@@ -201,7 +223,9 @@
       "source_version": "1",
       "source_page": 12,
       "wine_type": "Carlos muscadine",
-      "tasting_notes": "APPEARANCE Pale gold with bright clarity. AROMA Ripe muscadine, fresh grape and soft floral notes. TASTE Sweet, juicy grape flavor with gentle acidity and a clean, smooth finish."
+      "tasting_notes": "APPEARANCE Pale gold with bright clarity. AROMA Ripe muscadine, fresh grape and soft floral notes. TASTE Sweet, juicy grape flavor with gentle acidity and a clean, smooth finish.",
+      "availability": "available",
+      "active": true
     },
     {
       "slug": "watermelon-wine",
@@ -218,7 +242,51 @@
       "source_version": "1",
       "source_page": 13,
       "wine_type": "Fruit wine with natural flavors",
-      "tasting_notes": "APPEARANCE Clear, pale blush with delicate pink highlights. AROMA Fresh-cut watermelon with a soft candy-fruit lift. TASTE Juicy watermelon flavor, gentle sweetness and light acidity, finishing smooth and refreshing."
+      "tasting_notes": "APPEARANCE Clear, pale blush with delicate pink highlights. AROMA Fresh-cut watermelon with a soft candy-fruit lift. TASTE Juicy watermelon flavor, gentle sweetness and light acidity, finishing smooth and refreshing.",
+      "availability": "unavailable",
+      "active": true
+    },
+    {
+      "slug": "raspberry-rose",
+      "name": "Raspberry Rosé",
+      "description": "A raspberry rosé with bright red-berry flavors, crisp acidity and a hint of sweetness.",
+      "flavor_profile": "Raspberry and red berries",
+      "wine_type": "Raspberry rosé",
+      "abv_percent": 9,
+      "bottle_ml": 750,
+      "serving": "Chilled",
+      "pairings": "Goat cheese, grilled chicken, salmon and berry desserts.",
+      "source_document": "Vinoshipper public Raspberry Rose product listing; winery inventory confirmed 2026-10-17",
+      "availability": "available",
+      "active": true
+    },
+    {
+      "slug": "scream-in-a-bottle",
+      "name": "Scream in a Bottle",
+      "description": "A Locklear Winery wine currently offered for sale. Ask the winery for the latest tasting notes and details.",
+      "source_document": "Owner-confirmed availability 2026-10-17",
+      "availability": "available",
+      "active": true
+    },
+    {
+      "slug": "scuffletown-apple-cider-16oz",
+      "name": "Scuffletown Apple Cider (16 oz)",
+      "description": "Scuffletown apple cider in a 16-ounce package.",
+      "wine_type": "Apple cider",
+      "bottle_ml": 473,
+      "source_document": "Owner-confirmed cider portfolio 2026-10-17",
+      "availability": "available",
+      "active": true
+    },
+    {
+      "slug": "scuffletown-pear-cider-16oz",
+      "name": "Scuffletown Pear Cider (16 oz)",
+      "description": "Scuffletown pear cider in a 16-ounce package.",
+      "wine_type": "Pear cider",
+      "bottle_ml": 473,
+      "source_document": "Owner-confirmed cider portfolio 2026-10-17",
+      "availability": "available",
+      "active": true
     }
   ]
 }
