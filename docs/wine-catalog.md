@@ -97,3 +97,45 @@ database before running `tests/test_wine_catalog.py`. Those tests create and dro
 the `wine_concierge` schema and a sentinel table. Never use production for tests.
 Existing memory tests also use `TEST_DATABASE_URL` and isolate their tables in
 temporary schemas.
+
+## October 17 shopping update
+
+The original September portfolio stays unchanged. `data/wine_shop_2026-10-17.json`
+contains eight exact product-name matches plus the previously missing Raspberry
+Rosé, verified against the public Vinoshipper storefront on October 17. Eight
+matched bottles were $14 online; Raspberry Rosé was $15. Christmas in a Bottle
+was marked sold out online. These are dated online observations, not winery
+inventory or winery retail prices. No checkout or purchase was made.
+
+Set `WINE_SHOP_BOOTSTRAP=1` for a deployment to import this reviewed snapshot,
+then disable it after verifying nine updated records and fourteen total wines.
+The import uses the existing transaction, readback and checksum protection. It
+preserves omitted fields and does not change the assistant's private tables.
+Scream in a Bottle and Pineapple Cider remain pending an approved current source.
+Noblos, Fun in a Bottle and Summer in a Bottle are not silently mapped to
+portfolio wines. Several older storefront vintages list different ABVs from the
+September portfolio; the portfolio values remain and the UI directs customers
+to the label on their bottle. Resolve vintage and ABV differences with the owner
+before harmonizing those sources.
+
+`online_price_cents`, `online_status`, and `online_checked_on` are public fields.
+The importer requires a dated approved source URL for online commercial facts.
+`availability` and `retail_price_cents` retain their prior meanings and stay
+unknown until separately confirmed. All online prices are labeled by channel
+and check date. Stock observations are never advertised as live inventory.
+
+The root URL now serves the customer concierge. `/embed` uses the same page in
+a compact layout. The legacy `/ask` response string and `wines` array remain
+compatible. For Hostinger, replace the old custom-code widget with:
+
+```html
+<iframe src="https://wine-concierge.onrender.com/embed"
+  title="Locklear Wine Concierge" loading="lazy"
+  style="display:block;width:100%;height:950px;border:0;border-radius:18px;"
+  allow="" referrerpolicy="strict-origin-when-cross-origin"></iframe>
+```
+
+Keep it below the existing homepage buttons. The iframe scrolls when results
+exceed its height. It uses no microphone, local storage, tracking cookies, or
+access to private assistant history. Recommendation text and catalog fields are
+inserted as text, not HTML. Questions are sent only after the visitor submits.

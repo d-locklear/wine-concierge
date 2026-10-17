@@ -240,3 +240,20 @@ def test_real_postgres_import_repeat_preserve_fields_filter_and_atomic_rollback(
     finally:
         with psycopg.connect(test_database) as conn:
             conn.execute('DROP TABLE public.catalog_test_private')
+
+
+def test_real_shop_import_preserves_portfolio_and_private_data(test_database, portfolio):
+    snapshot = json.loads((Path(__file__).resolve().parents[1] / 'data/wine_shop_2026-10-17.json').read_text())
+    catalog.import_catalog(portfolio)
+    catalog.import_catalog(snapshot, skip_if_imported=True)
+    assert catalog.import_catalog(snapshot, skip_if_imported=True)['imported'] == 0
+    wines = catalog.load_catalog()
+    assert len(wines) == 14
+    christmas = next(w for w in wines if w['slug'] == 'christmas-in-a-bottle')
+    assert christmas['online_status'] == 'sold_out'
+    assert christmas['availability'] == 'unknown'
+    assert christmas['retail_price_cents'] is None
+    assert christmas['online_price_cents'] == 1400
+    assert christmas['abv_percent'] == 9
+    catalog.import_catalog(portfolio)
+    assert next(w for w in catalog.load_catalog() if w['slug'] == 'christmas-in-a-bottle')['online_price_cents'] == 1400
