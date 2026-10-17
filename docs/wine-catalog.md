@@ -139,3 +139,26 @@ Keep it below the existing homepage buttons. The iframe scrolls when results
 exceed its height. It uses no microphone, local storage, tracking cookies, or
 access to private assistant history. Recommendation text and catalog fields are
 inserted as text, not HTML. Questions are sent only after the visitor submits.
+
+### Live rollout and response-format correction
+
+PR #10 deployed October 17 to the existing Render service. Nine shopping records
+were verified field-for-field against Postgres, with fourteen total wines and
+checksum `27e075995c674f9a9008fd06bbb473296e9656ab03c81d9356f71d36f0ad7654`.
+`WINE_SHOP_BOOTSTRAP` was then disabled. The hosted screen and peach, raspberry,
+tropical, sold-out-online and no-dry-match scenarios passed live checks.
+
+A further test of the legacy Hostinger widget returned a 502 because the legacy
+model's answer failed validation. The concierge now defaults to `gpt-4o-mini`
+with strict JSON-schema output whose slug enum is built from the active catalog.
+Server-side validation still rejects unknown, duplicate or excessive wine picks.
+An explicit legacy `CONCIERGE_MODEL=gpt-4` override retains prompt-only JSON
+compatibility; it does not receive an unsupported structured-output parameter.
+The default supersedes the older gpt-4 rollout note above. Source: OpenAI's
+Structured Outputs guide, verified October 17, 2026:
+https://developers.openai.com/api/docs/guides/structured-outputs
+
+GitHub is the project's durable home as requested by the owner; see `AGENTS.md`.
+Hostinger still contains the old text-only widget. Replacing it with the `/embed`
+iframe remains a separate website-builder step; the app deployment does not
+change Hostinger's saved HTML.
