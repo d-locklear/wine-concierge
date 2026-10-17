@@ -217,7 +217,7 @@ def load_postgres_catalog():
     with psycopg.connect(database_url(), connect_timeout=10, row_factory=dict_row, prepare_threshold=None) as conn:
         rows = conn.execute('SELECT data FROM wine_concierge.wines ORDER BY slug').fetchall()
     return [public_wine(r['data']) for r in rows
-            if r['data'].get('active', True) and r['data'].get('availability') != 'unavailable']
+            if r['data'].get('active', True) and r['data'].get('availability') == 'available']
 
 
 def load_google_sheets_catalog():
