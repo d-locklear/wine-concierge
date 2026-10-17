@@ -5,6 +5,7 @@ import json
 import math
 import os
 import re
+from datetime import date
 from urllib.parse import urlparse
 
 import psycopg
@@ -33,6 +34,7 @@ PUBLIC_FIELDS = (
     'slug', 'name', 'description', 'wine_type', 'style', 'sweetness',
     'flavor_profile', 'tasting_notes', 'abv_percent', 'bottle_ml', 'serving',
     'pairings', 'retail_price_cents', 'purchase_url', 'availability',
+    'online_price_cents', 'online_status', 'online_checked_on',
 )
 TEXT_FIELDS = (
     'name', 'description', 'wine_type', 'style', 'sweetness', 'flavor_profile',
@@ -40,6 +42,7 @@ TEXT_FIELDS = (
 )
 ALLOWED_FIELDS = set(PUBLIC_FIELDS) | {
     'upc', 'source_document', 'source_version', 'source_page', 'review_notes', 'active',
+    'online_source_url',
 }
 
 
@@ -100,25 +103,37 @@ def validate_catalog(document):
             abv = item['abv_percent']
             if isinstance(abv, bool) or not isinstance(abv, (int, float)) or not math.isfinite(abv) or not 0 <= abv <= 100:
                 raise ValueError(f'{label}: invalid ABV')
-        for key in ('bottle_ml', 'source_page', 'retail_price_cents'):
+        for key in ('bottle_ml', 'source_page', 'retail_price_cents', 'online_price_cents'):
             value = item.get(key)
-            if value is not None and (type(value) is not int or value < (0 if key == 'retail_price_cents' else 1)):
+            if value is not None and (type(value) is not int or value < (0 if key.endswith('price_cents') else 1)):
                 raise ValueError(f'{label}: invalid {key}')
+        if 'online_status' in item and item['online_status'] not in ('listed', 'sold_out', 'unknown'):
+            raise ValueError(f'{label}: invalid online status')
+        if any(k in item for k in ('online_price_cents', 'online_status')):
+            if not item.get('online_checked_on') or not item.get('online_source_url'):
+                raise ValueError(f'{label}: online facts require a checked date and source URL')
+        if 'online_checked_on' in item:
+            try:
+                checked = date.fromisoformat(item['online_checked_on'])
+                if checked.isoformat() != item['online_checked_on'] or checked > date.today():
+                    raise ValueError()
+            except (ValueError, TypeError):
+                raise ValueError(f'{label}: invalid online checked date') from None
         if 'availability' in item and item['availability'] not in ('unknown', 'available', 'unavailable'):
             raise ValueError(f'{label}: invalid availability')
         if 'active' in item and type(item['active']) is not bool:
             raise ValueError(f'{label}: active must be boolean')
-        url = item.get('purchase_url')
-        if url is not None:
-            if not isinstance(url, str):
-                raise ValueError(f'{label}: invalid purchase URL')
-            parsed = urlparse(url)
-            host = parsed.hostname or ''
-            if parsed.scheme != 'https' or parsed.username or parsed.password or not (
-                host in ('vinoshipper.com', 'locklearwinery.com', 'www.locklearwinery.com')
-                or host.endswith('.vinoshipper.com')
-            ):
-                raise ValueError(f'{label}: purchase URL must be an approved HTTPS winery or Vinoshipper link')
+        for url in (item.get('purchase_url'), item.get('online_source_url')):
+            if url is not None:
+                if not isinstance(url, str):
+                    raise ValueError(f'{label}: invalid purchase URL')
+                parsed = urlparse(url)
+                host = parsed.hostname or ''
+                if parsed.scheme != 'https' or parsed.username or parsed.password or not (
+                    host in ('vinoshipper.com', 'locklearwinery.com', 'www.locklearwinery.com')
+                    or host.endswith('.vinoshipper.com')
+                ):
+                    raise ValueError(f'{label}: purchase URL must be an approved HTTPS winery or Vinoshipper link')
         cleaned.append(item)
     return cleaned
 
@@ -183,6 +198,18 @@ def bootstrap_catalog():
     except Exception:
         # Fail the new worker without exposing connection strings or credentials.
         raise RuntimeError('Wine catalog deployment import failed') from None
+
+
+def bootstrap_shop_catalog():
+    """Explicit, checksum-protected import of the reviewed online shop snapshot."""
+    if os.getenv('WINE_SHOP_BOOTSTRAP') != '1':
+        return None
+    from pathlib import Path
+    try:
+        path = Path(__file__).resolve().parent / 'data/wine_shop_2026-10-17.json'
+        return import_catalog(json.loads(path.read_text()), skip_if_imported=True)
+    except Exception:
+        raise RuntimeError('Wine shop deployment import failed') from None
 
 
 def load_postgres_catalog():

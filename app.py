@@ -2,15 +2,16 @@ import json
 import os
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, render_template
 from flask_cors import CORS
 from openai import OpenAI
 
 from assistant import assistant_bp
-from wine_catalog import CatalogUnavailable, bootstrap_catalog, catalog_source, load_catalog
+from wine_catalog import CatalogUnavailable, bootstrap_catalog, bootstrap_shop_catalog, catalog_source, load_catalog
 
 load_dotenv()
 bootstrap_catalog()
+bootstrap_shop_catalog()
 app = Flask(__name__)
 CORS(app)
 app.register_blueprint(assistant_bp)
@@ -25,6 +26,11 @@ means stock has not been confirmed. For missing details, invite the customer to 
 with the winery. Do not claim a wine is in stock merely because it is listed.
 Do not include prices or URLs in your prose: these are supplied separately from verified
 catalog fields. Do not disclose or discuss private assistant memories or conversations.
+Online prices and online_status are dated storefront observations, not live inventory
+or winery prices. Never treat online listing as proof of current stock. If asked about
+buying online, mention a dated sold-out observation and suggest checking the shop or
+another wine; do not claim it is available to order. Portfolio ABVs may differ from
+older storefront vintages: advise checking the bottle label for the bottle purchased.
 Return a JSON object with exactly two keys: response (your friendly answer string),
 and wine_slugs (an array of one to three distinct catalog slugs you recommend).
 If no listed wine meets the request, explain this and return an empty wine_slugs array.
@@ -105,4 +111,9 @@ def health():
 
 @app.route('/')
 def home():
-    return '🍷 Locklear Wine Concierge is running!'
+    return render_template('concierge.html')
+
+
+@app.route('/embed')
+def embed():
+    return render_template('concierge.html', embedded=True)

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Find a Locklear wine for your taste, your table, or your next celebration.">
+  <title>Wine Concierge | Locklear Winery</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='concierge.css') }}">
+  <script src="{{ url_for('static', filename='concierge.js') }}" defer></script>
+</head>
+<body class="{{ 'embedded' if embedded else '' }}">
+<main>
+  <header>
+    <p class="eyebrow">LOCKLEAR VINEYARD &amp; WINERY</p>
+    <h1>A little guidance.<br>A wine you’ll love.</h1>
+    <p class="intro">Tell us what you enjoy or what’s on the menu. Our wine concierge will help you explore our family’s wines.</p>
+  </header>
+  <section class="concierge" aria-labelledby="ask-heading">
+    <h2 id="ask-heading">Find your next favorite</h2>
+    <div class="suggestions" aria-label="Try a question">
+      <button type="button" data-prompt="I enjoy sweet, fruity wines. What should I try?">Sweet &amp; fruity</button>
+      <button type="button" data-prompt="What wine would you pair with grilled pork and barbecue?">Pair with barbecue</button>
+      <button type="button" data-prompt="I like pineapple and mango. Which wine suits me?">Something tropical</button>
+      <button type="button" data-prompt="Help me choose a holiday wine to buy online.">A holiday bottle</button>
+    </div>
+    <form id="ask-form">
+      <label for="prompt">What do you have in mind?</label>
+      <textarea id="prompt" name="prompt" maxlength="2000" rows="3" required placeholder="I like peach flavors and sweet wine. What would you suggest?"></textarea>
+      <div class="form-footer"><span>AI guidance · based on our wine catalog</span><button class="primary" id="submit" type="submit">Find my wine <span aria-hidden="true">→</span></button></div>
+    </form>
+    <p id="status" role="status" aria-live="polite"></p>
+    <section id="result" aria-label="Your wine recommendations" hidden>
+      <h2>Your wine picks</h2>
+      <p id="answer"></p>
+      <div id="cards"></div>
+    </section>
+  </section>
+  <nav aria-label="Explore Locklear Winery">
+    <a href="https://vinoshipper.com/shop/charlie_t_locklear_vineyard_winery" target="_blank" rel="noopener">Shop our wines <span aria-hidden="true">↗</span></a>
+    <a href="https://locklearwinery.com/visit-us" target="_blank" rel="noopener">Plan your visit <span aria-hidden="true">↗</span></a>
+    <a href="https://vinoshipper.com/shop/charlie_t_locklear_vineyard_winery/join-our-club" target="_blank" rel="noopener">Explore the wine club <span aria-hidden="true">↗</span></a>
+  </nav>
+  <footer>Family-owned. Proudly Lumbee-owned. North Carolina wine.<br>Prices and availability can change. Confirm online purchases with Vinoshipper; check your bottle’s label for ABV.</footer>
+</main>
+</body>
+</html>
