@@ -82,3 +82,32 @@ def test_customer_pages_and_assets():
     assert b'embedded' in client.get('/embed').data
     for asset in ('concierge.js', 'concierge.css'):
         assert client.get('/static/' + asset).status_code == 200
+
+
+def test_structured_output_restricts_model_to_current_catalog(monkeypatch, snapshot):
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+    monkeypatch.delenv('CONCIERGE_MODEL', raising=False)
+    api = MagicMock()
+    api.chat.completions.create.return_value = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{"response":"Try Raspberry Rosé.","wine_slugs":["raspberry-rose"]}'))])
+    wines = [catalog.public_wine(snapshot['wines'][-1])]
+    with patch.object(app, 'OpenAI', return_value=api):
+        answer = app.recommend_wine('Wine for salmon?', wines)
+    arguments = api.chat.completions.create.call_args.kwargs
+    assert arguments['model'] == 'gpt-4o-mini'
+    schema = arguments['response_format']['json_schema']
+    assert schema['strict'] is True
+    assert schema['schema']['additionalProperties'] is False
+    assert schema['schema']['properties']['wine_slugs']['items']['enum'] == ['raspberry-rose']
+    assert answer['wines'] == wines
+
+
+def test_legacy_model_override_does_not_receive_unsupported_schema(monkeypatch, snapshot):
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+    monkeypatch.setenv('CONCIERGE_MODEL', 'gpt-4')
+    api = MagicMock()
+    api.chat.completions.create.return_value = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{"response":"Please contact us.","wine_slugs":[]}'))])
+    with patch.object(app, 'OpenAI', return_value=api):
+        app.recommend_wine('A dry wine?', [catalog.public_wine(snapshot['wines'][0])])
+    assert 'response_format' not in api.chat.completions.create.call_args.kwargs
