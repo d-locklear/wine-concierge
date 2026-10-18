@@ -93,3 +93,13 @@ Safari/keyboard-dictation fallback. This is a code correction and hypothesis,
 not proof of physical iPhone recognition. WebKit documents that SpeechRecognition
 behavior may differ in embedded app browsers; test the updated preview on
 Safari proper before considering a different transcription path.
+
+## iPhone dictation fallback
+
+The corrected Web Speech approach still did not capture words in the owner's
+iPhone test. On iPhone and iPad, the guest control now opens the question field
+and instructs the visitor to tap the microphone on the native keyboard. This
+uses iOS dictation to populate editable text, then the visitor submits it.
+No page microphone permission is requested in this path. Desktop browsers with
+SpeechRecognition retain the browser listening flow. True one-tap in-page
+recording and Charlie's recognizable spoken replies remain future work.

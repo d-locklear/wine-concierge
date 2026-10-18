@@ -72,6 +72,7 @@ const microphone = document.getElementById('microphone');
 const voiceNote = document.getElementById('voice-note');
 const voiceStatus = document.getElementById('voice-status');
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+const onIPhone = /iPhone|iPad|iPod/.test(navigator.userAgent);
 let recognition = null;
 let listening = false;
 let receivedSpeech = false;
@@ -88,7 +89,15 @@ function stopGuestListening() {
   recognition.onresult = null;
   recognition.abort();
 }
-if (SpeechRecognition && window.isSecureContext) {
+if (onIPhone) {
+  microphone.hidden = false;
+  microphone.textContent = 'Use iPhone dictation';
+  voiceNote.textContent = 'Tap this button, then tap the microphone on your iPhone keyboard to speak your question. Review the words before selecting Find my wine.';
+  microphone.addEventListener('click', () => {
+    promptInput.focus();
+    voiceStatus.textContent = 'Tap the microphone on your iPhone keyboard and speak.';
+  });
+} else if (SpeechRecognition && window.isSecureContext) {
   microphone.hidden = false;
   voiceNote.textContent = 'Your browser may process speech online. Review the words, then select Find my wine. On iPhone, you can also tap the keyboard microphone in the question field. Replies are text for now.';
   microphone.addEventListener('click', () => {

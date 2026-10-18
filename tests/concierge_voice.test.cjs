@@ -2,11 +2,11 @@ const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const fs = require('node:fs');
-function setup({supported=true, secure=true, failStart=false}={}) {
+function setup({supported=true, secure=true, failStart=false, userAgent='Desktop Chrome'}={}) {
   const elements = {};
   function element(id) {
-    return elements[id] ||= {value:'', maxLength:2000, hidden:true, disabled:false, textContent:'', listeners:{}, attributes:{},
-      addEventListener(name,fn){this.listeners[name]=fn;}, setAttribute(k,v){this.attributes[k]=v;}, focus(){},
+    return elements[id] ||= {value:'', maxLength:2000, hidden:true, disabled:false, textContent:'', listeners:{}, attributes:{}, focused:false,
+      addEventListener(name,fn){this.listeners[name]=fn;}, setAttribute(k,v){this.attributes[k]=v;}, focus(){this.focused=true;},
       replaceChildren(){}, append(){}};
   }
   const document={hidden:false, getElementById:element, querySelectorAll:()=>[], listeners:{},
@@ -22,7 +22,7 @@ function setup({supported=true, secure=true, failStart=false}={}) {
   const requests=[];
   const timers=[];
   const timer=(fn,delay)=>{const task={fn,delay,cancelled:false};timers.push(task);return task;};
-  vm.runInNewContext(fs.readFileSync('static/concierge.js','utf8'),{document,window,URL,Intl,AbortController,setTimeout:timer,clearTimeout:task=>{if(task)task.cancelled=true;},
+  vm.runInNewContext(fs.readFileSync('static/concierge.js','utf8'),{document,window,navigator:{userAgent},URL,Intl,AbortController,setTimeout:timer,clearTimeout:task=>{if(task)task.cancelled=true;},
     fetch:async(url,options)=>{requests.push({url,options});return {ok:true,json:async()=>({response:'Try our wine.',wines:[]})};}});
   return {elements,document,window,sessions,requests,timers,click:()=>element('microphone').listeners.click(),
     result(text, session=sessions.at(-1)){const item=[{transcript:text}];item.isFinal=true;session.onresult?.({results:[item]});}};
@@ -88,5 +88,16 @@ test('interim recognition fills editable question without interrupting capture',
   s.sessions[0].onresult({results:[item]});
   assert.equal(s.elements.prompt.value,'apple pie');
   assert.equal(s.sessions[0].aborted,undefined);
+  assert.equal(s.requests.length,0);
+});
+
+test('iPhone control opens native keyboard dictation instead of unreliable web speech',()=>{
+  const s=setup({userAgent:'Mozilla/5.0 (iPhone; CPU iPhone OS 18_7) Safari/604.1'});
+  assert.equal(s.elements.microphone.hidden,false);
+  assert.equal(s.elements.microphone.textContent,'Use iPhone dictation');
+  s.click();
+  assert.equal(s.elements.prompt.focused,true);
+  assert.equal(s.sessions.length,0);
+  assert.match(s.elements['voice-status'].textContent,/keyboard/);
   assert.equal(s.requests.length,0);
 });
