@@ -20,4 +20,24 @@ Repository: d-locklear/wine-concierge. Test changes before production deployment
 - Validate portfolio data and build a test conversation flow.
 
 ## Status
-Planning document created. No portrait asset, voice clone, deployment or live website update is implied by this document.
+Portrait implementation prepared on `feature/dad-original-portrait` for review. The
+customer pages at `/` and `/embed` display the exact original uploaded JPEG as
+`static/images/dad-original.jpeg`, without regeneration, recompression or cropping.
+Both supplied portrait files were byte-identical. The image is 1254 × 1254 pixels;
+its SHA-256 is `977be9e3b0d53b8a42d46f149ecff7e24e5808948a4fe1f1dd7c2e012d7c5fb0`.
+The page explicitly identifies Dad as a virtual AI host and describes the current
+interaction as text. The `/ask` contract and catalog behavior are unchanged.
+
+Audio inventory: four supplied voicemails contain about 52.9 seconds total, and
+the supplied video is about 24.3 seconds long with an audio stream. One voicemail
+uses an 8 kHz mono stream; three use 44.1 kHz stereo; the video uses 44.1 kHz mono.
+These are container/codec observations, not measurements of usable speech,
+speaker identity, clarity or suitability for cloning. Source audio/video remains
+private and is not committed to this public repository.
+
+The customer concierge has no voice implementation. The separate authenticated
+owner assistant has realtime speech using a configured provider voice; it must
+not be reused as Dad or expose private memory tools to guests. A recognizable
+Dad voice still requires listening and speaker review, confirmed consent,
+provider selection and requirements, and family recognition testing. No clone,
+speaking avatar, live deployment or Hostinger website change has been made.
