@@ -2,14 +2,14 @@ const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const fs = require('node:fs');
-function setup({supported=true, secure=true, failStart=false, userAgent='Desktop Chrome'}={}) {
+function setup({supported=true, secure=true, failStart=false, userAgent='Desktop Chrome', recording=false, deny=false}={}) {
   const elements = {};
   function element(id) {
     return elements[id] ||= {value:'', maxLength:2000, hidden:true, disabled:false, textContent:'', listeners:{}, attributes:{}, focused:false,
       addEventListener(name,fn){this.listeners[name]=fn;}, setAttribute(k,v){this.attributes[k]=v;}, focus(){this.focused=true;},
       replaceChildren(){}, append(){}};
   }
-  const document={hidden:false, getElementById:element, querySelectorAll:()=>[], listeners:{},
+  const document={hidden:false, body:{dataset:{recordingEnabled:String(recording)}},getElementById:element, querySelectorAll:()=>[], listeners:{},
     addEventListener(name,fn){this.listeners[name]=fn;}};
   const sessions=[];
   class Recognition {
@@ -19,12 +19,25 @@ function setup({supported=true, secure=true, failStart=false, userAgent='Desktop
   }
   const window={isSecureContext:secure,listeners:{},addEventListener(name,fn){this.listeners[name]=fn;}};
   if(supported) window.SpeechRecognition=Recognition;
+  const tracks=[]; const recorders=[];
+  class Recorder {
+    static isTypeSupported(mime){return mime==='audio/mp4';}
+    constructor(stream, options){this.mimeType=options.mimeType;this.state='inactive';recorders.push(this);}
+    start(){this.state='recording';}
+    stop(){this.state='inactive';this.ondataavailable?.({data:new Blob(['a'.repeat(1000)],{type:this.mimeType})});this.onstop?.();}
+  }
+  if(recording) window.MediaRecorder=Recorder;
+  const navigator={userAgent,mediaDevices:recording?{getUserMedia:async()=>{
+    if(deny) throw Object.assign(new Error('denied'),{name:'NotAllowedError'});
+    const track={stopped:false,stop(){this.stopped=true;}};tracks.push(track);
+    return {getTracks:()=>[track]};
+  }}:undefined};
   const requests=[];
   const timers=[];
   const timer=(fn,delay)=>{const task={fn,delay,cancelled:false};timers.push(task);return task;};
-  vm.runInNewContext(fs.readFileSync('static/concierge.js','utf8'),{document,window,navigator:{userAgent},URL,Intl,AbortController,setTimeout:timer,clearTimeout:task=>{if(task)task.cancelled=true;},
-    fetch:async(url,options)=>{requests.push({url,options});return {ok:true,json:async()=>({response:'Try our wine.',wines:[]})};}});
-  return {elements,document,window,sessions,requests,timers,click:()=>element('microphone').listeners.click(),
+  vm.runInNewContext(fs.readFileSync('static/concierge.js','utf8'),{document,window,navigator,URL,Intl,Blob,FormData,AbortController,setTimeout:timer,clearTimeout:task=>{if(task)task.cancelled=true;},
+    fetch:async(url,options)=>{requests.push({url,options});return {ok:true,json:async()=>url==='/transcribe'?{text:'What pairs with apple pie?'}:{response:'Try our wine.',wines:[]}};}});
+  return {elements,document,window,sessions,recorders,tracks,requests,timers,click:()=>element('microphone').listeners.click(),
     result(text, session=sessions.at(-1)){const item=[{transcript:text}];item.isFinal=true;session.onresult?.({results:[item]});}};
 }
 test('unsupported and insecure browsers retain text entry without microphone',()=>{
@@ -99,5 +112,26 @@ test('iPhone control opens native keyboard dictation instead of unreliable web s
   assert.equal(s.elements.prompt.focused,true);
   assert.equal(s.sessions.length,0);
   assert.match(s.elements['voice-status'].textContent,/keyboard/);
+  assert.equal(s.requests.length,0);
+});
+
+test('configured iPhone recorder transcribes speech for review without submitting wine question',async()=>{
+  const s=setup({recording:true,userAgent:'Mozilla/5.0 (iPhone) Safari/604.1'});
+  await s.click();
+  assert.equal(s.elements.microphone.textContent,'Stop recording');
+  await s.click();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(s.tracks[0].stopped,true);
+  assert.equal(s.requests.length,1);
+  assert.equal(s.requests[0].url,'/transcribe');
+  assert.equal(s.elements.prompt.value,'What pairs with apple pie?');
+  assert.match(s.elements['voice-status'].textContent,/Review/);
+});
+
+test('denied recorder permission leaves typed question untouched',async()=>{
+  const s=setup({recording:true,deny:true,userAgent:'Mozilla/5.0 (iPhone) Safari/604.1'});
+  s.elements.prompt.value='keep this';await s.click();
+  assert.equal(s.elements.prompt.value,'keep this');
+  assert.match(s.elements['voice-status'].textContent,/denied/);
   assert.equal(s.requests.length,0);
 });

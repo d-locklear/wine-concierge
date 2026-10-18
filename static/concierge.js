@@ -73,12 +73,29 @@ const voiceNote = document.getElementById('voice-note');
 const voiceStatus = document.getElementById('voice-status');
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const onIPhone = /iPhone|iPad|iPod/.test(navigator.userAgent);
+const recordingEnabled = document.body?.dataset?.recordingEnabled === 'true' &&
+  !!navigator.mediaDevices?.getUserMedia && !!window.MediaRecorder && window.isSecureContext;
 let recognition = null;
 let listening = false;
 let receivedSpeech = false;
 let voiceFailed = false;
 let listeningTimeout = null;
+let recorder = null;
+let recordingStream = null;
+let recordingCancelled = false;
+let recordingGeneration = 0;
+let transcriptionController = null;
 function stopGuestListening() {
+  recordingGeneration++;
+  recordingCancelled = true;
+  transcriptionController?.abort();
+  transcriptionController = null;
+  if (recorder?.state === 'recording') recorder.stop();
+  recordingStream?.getTracks().forEach(track => track.stop());
+  recordingStream = null;
+  recorder = null;
+  if (recordingEnabled) microphone.textContent = 'Record your question';
+  microphone.setAttribute('aria-pressed', 'false');
   if (!recognition || !listening) return;
   listening = false;
   clearTimeout(listeningTimeout);
@@ -89,7 +106,92 @@ function stopGuestListening() {
   recognition.onresult = null;
   recognition.abort();
 }
-if (onIPhone) {
+if (recordingEnabled) {
+  microphone.hidden = false;
+  microphone.textContent = 'Record your question';
+  voiceNote.textContent = 'Tap to record, speak, then tap Stop. Audio is sent for transcription. Review the words before selecting Find my wine.';
+  microphone.addEventListener('click', async () => {
+    if (recorder?.state === 'recording') {
+      recorder.stop();
+      microphone.disabled = true;
+      microphone.textContent = 'Transcribing…';
+      voiceStatus.textContent = 'Turning your speech into text…';
+      return;
+    }
+    if (microphone.disabled || submit.disabled) return;
+    const generation = ++recordingGeneration;
+    recordingCancelled = false;
+    microphone.disabled = true;
+    voiceStatus.textContent = 'Waiting for microphone access…';
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({audio:true});
+      if (recordingGeneration !== generation) {
+        stream.getTracks().forEach(track => track.stop());
+        return;
+      }
+      const mime = ['audio/mp4', 'audio/webm', 'audio/ogg'].find(type => window.MediaRecorder.isTypeSupported(type));
+      if (!mime) throw new Error('unsupported-format');
+      recordingStream = stream;
+      const chunks = [];
+      recorder = new window.MediaRecorder(stream, {mimeType:mime});
+      recorder.ondataavailable = event => { if (event.data?.size) chunks.push(event.data); };
+      recorder.onerror = () => {
+        stopGuestListening();
+        microphone.disabled = false;
+        voiceStatus.textContent = 'Recording stopped unexpectedly. Please try again or type your question.';
+      };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach(track => track.stop());
+        recordingStream = null;
+        recorder = null;
+        clearTimeout(listeningTimeout);
+        listeningTimeout = null;
+        microphone.setAttribute('aria-pressed', 'false');
+        if (recordingCancelled || recordingGeneration !== generation) return;
+        const audio = new Blob(chunks, {type:mime});
+        if (audio.size < 500 || audio.size > 2 * 1024 * 1024) {
+          voiceStatus.textContent = 'No usable recording captured. Try again or type your question.';
+          microphone.textContent = 'Record your question';
+          microphone.disabled = false;
+          return;
+        }
+        const data = new FormData();
+        data.append('audio', audio, 'question' + (mime === 'audio/mp4' ? '.mp4' : mime === 'audio/ogg' ? '.ogg' : '.webm'));
+        transcriptionController = new AbortController();
+        try {
+          const response = await fetch('/transcribe', {method:'POST',body:data,signal:transcriptionController.signal});
+          const body = await response.json();
+          if (!response.ok) throw new Error(body.error || 'Transcription failed.');
+          if (recordingGeneration !== generation) return;
+          promptInput.value = body.text.slice(0, promptInput.maxLength);
+          voiceStatus.textContent = 'Question captured. Review it, then select Find my wine.';
+        } catch (error) {
+          if (error.name !== 'AbortError') voiceStatus.textContent = error.message || 'Transcription failed. Please type your question.';
+        } finally {
+          transcriptionController = null;
+          microphone.textContent = 'Record your question';
+          microphone.disabled = false;
+        }
+      };
+      recorder.start();
+      microphone.disabled = false;
+      microphone.textContent = 'Stop recording';
+      microphone.setAttribute('aria-pressed', 'true');
+      voiceStatus.textContent = 'Recording… Tap Stop when finished.';
+      listeningTimeout = setTimeout(() => { if (recorder?.state === 'recording') recorder.stop(); }, 20000);
+    } catch (error) {
+      stream?.getTracks().forEach(track => track.stop());
+      recordingStream?.getTracks().forEach(track => track.stop());
+      recordingStream = null;
+      microphone.disabled = false;
+      microphone.textContent = 'Record your question';
+      voiceStatus.textContent = error?.name === 'NotAllowedError'
+        ? 'Microphone permission was denied. You can type your question.'
+        : 'Recording is unavailable here. You can type your question.';
+    }
+  });
+} else if (onIPhone) {
   microphone.hidden = false;
   microphone.textContent = 'Use iPhone dictation';
   voiceNote.textContent = 'Tap this button, then tap the microphone on your iPhone keyboard to speak your question. Review the words before selecting Find my wine.';

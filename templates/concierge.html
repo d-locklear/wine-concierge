@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='concierge.css') }}">
   <script src="{{ url_for('static', filename='concierge.js') }}" defer></script>
 </head>
-<body class="{{ 'embedded' if embedded else '' }}">
+<body class="{{ 'embedded' if embedded else '' }}" data-recording-enabled="{{ 'true' if preview|default(false) and recording_enabled|default(false) else 'false' }}">
 <main>
   <header>
     {% if preview %}<p class="host-disclosure" role="note">Test preview · recommendations use our existing concierge. Replies are text for now.</p>{% endif %}
@@ -19,7 +19,7 @@
         <p class="host-label">MEET YOUR VIRTUAL HOST</p>
         <h1>A warm welcome<br>from Charlie.</h1>
         <p class="intro">Tell us what you enjoy or what’s on the menu. Charlie, our AI wine concierge, will help you explore our family’s wines.</p>
-        <p class="host-disclosure">A virtual host inspired by Charlie. Ask by text, or use your microphone when supported.</p>
+        <p class="host-disclosure">A virtual host inspired by Charlie. Ask by text, or record a question when available. Replies are text for now.</p>
       </div>
     </div>
   </header>

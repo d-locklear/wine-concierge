@@ -101,5 +101,22 @@ iPhone test. On iPhone and iPad, the guest control now opens the question field
 and instructs the visitor to tap the microphone on the native keyboard. This
 uses iOS dictation to populate editable text, then the visitor submits it.
 No page microphone permission is requested in this path. Desktop browsers with
-SpeechRecognition retain the browser listening flow. True one-tap in-page
-recording and Charlie's recognizable spoken replies remain future work.
+SpeechRecognition retain the browser listening flow. At this stage direct
+in-page recording was still pending, as is Charlie's recognizable voice.
+
+## Direct recording prototype
+
+The review branch now contains a separate preview-only `/transcribe` route.
+When `OPENAI_API_KEY` is configured on the preview service, the customer page
+uses `getUserMedia` and `MediaRecorder` to capture up to 20 seconds of audio.
+It sends the recording to the preview service for `gpt-transcribe` transcription,
+then fills the editable question field. The guest submits the text separately.
+The server accepts only supported audio formats under 2 MiB and limits requests;
+it does not retain recordings or add them to the public repository. The page
+discloses that audio is sent for transcription. When the key is absent, the
+existing iPhone keyboard dictation fallback remains visible.
+
+Code and automated checks are ready; a Render preview secret and physical
+iPhone capture test are still required. Do not call the microphone fixed until
+audio has been captured and transcribed on the owner's device. No production
+service or Hostinger change is part of this prototype.
