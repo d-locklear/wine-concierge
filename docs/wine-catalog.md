@@ -162,3 +162,27 @@ GitHub is the project's durable home as requested by the owner; see `AGENTS.md`.
 Hostinger still contains the old text-only widget. Replacing it with the `/embed`
 iframe remains a separate website-builder step; the app deployment does not
 change Hostinger's saved HTML.
+
+### October 18 Charlie phone-test preview
+
+A separate Render free service, `charlie-concierge-preview`, was created from
+`feature/dad-original-portrait` in the existing winery workspace. It serves
+`preview_app:app`; it has no database credentials, AI-provider key or owner
+assistant routes. Validated guest prompts use the existing public `/ask` service,
+and catalog reads use its public `/wines` endpoint. Production configuration,
+main and Hostinger remain unchanged.
+
+Preview URL: https://charlie-concierge-preview.onrender.com/
+Initial deployment `dep-dbaf5be7bikc73ed92a0` reached `live` on October 18.
+HTTP checks returned 200 for `/health`, `/wines` (14 wines), the original portrait
+(SHA-256 `977be9e3b0d53b8a42d46f149ecff7e24e5808948a4fe1f1dd7c2e012d7c5fb0`),
+and a peach recommendation with Peach, Love in a Bottle and Strawberry. Browser
+inspection confirmed Charlie wording, preview disclosure and microphone control.
+Screenshot capture timed out, so no screenshot-based visual approval is claimed.
+The owner had already approved the earlier portrait design preview.
+
+The focused suite passed 28 Python and 7 JavaScript checks. Physical iPhone
+microphone capture and permission handling remain pending owner testing. Replies
+remain text; no recognizable voice has been created. Free service cold starts
+can take about a minute after idle. The workspace display name is unchanged;
+Locklear Winery was recommended as a clearer name.
