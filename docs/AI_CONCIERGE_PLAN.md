@@ -61,3 +61,10 @@ failure and `/ask` submission). The focused Python portrait/shop suite passed
 all sixteen checks. JavaScript syntax and `git diff --check` passed. Real-browser
 permission prompts and physical microphone capture are not covered by these
 automated checks.
+
+## Public host name
+
+Owner requested Charlie as the guest-facing host name on October 18, 2026.
+The welcome heading, introduction, image alternative text, page title and AI
+disclosure use Charlie. The original portrait asset and its filename are unchanged.
+The design preview uses the same name.
