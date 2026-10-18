@@ -68,3 +68,15 @@ Owner requested Charlie as the guest-facing host name on October 18, 2026.
 The welcome heading, introduction, image alternative text, page title and AI
 disclosure use Charlie. The original portrait asset and its filename are unchanged.
 The design preview uses the same name.
+
+## Hosted phone-test preview
+
+`preview_app.py` serves the review-branch customer UI with a test-preview label.
+It forwards validated guest questions and public catalog reads only to the
+existing public concierge. No production secrets, database access, owner
+assistant modules or private memory endpoints are included in this server.
+Use `pip install -r requirements-preview.txt` and
+`gunicorn preview_app:app --bind 0.0.0.0:$PORT --timeout 90` for the separate
+Render free web service. The main branch and existing service remain unchanged.
+Questions submitted in this preview use the existing recommendation backend.
+Physical phone microphone testing and recognizable voice remain pending.

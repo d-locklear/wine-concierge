@@ -11,6 +11,7 @@
 <body class="{{ 'embedded' if embedded else '' }}">
 <main>
   <header>
+    {% if preview %}<p class="host-disclosure" role="note">Test preview · recommendations use our existing concierge. Replies are text for now.</p>{% endif %}
     <p class="eyebrow">LOCKLEAR VINEYARD &amp; WINERY</p>
     <div class="host-introduction">
       <img class="host-portrait" src="{{ url_for('static', filename='images/dad-original.jpeg') }}" alt="Portrait of Charlie, our virtual wine host" width="1254" height="1254" fetchpriority="high">
