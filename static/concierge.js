@@ -50,6 +50,8 @@ form.addEventListener('submit', async event => {
   if (submit.disabled || !promptInput.value.trim()) return;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 65000);
+  stopGuestListening();
+  microphone.disabled = true;
   submit.disabled = true; result.hidden = true; statusLine.textContent = 'Finding a wine for you…';
   try {
     const response = await fetch('/ask', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:promptInput.value.trim()}),signal:controller.signal});
@@ -61,5 +63,94 @@ form.addEventListener('submit', async event => {
     result.hidden = false; statusLine.textContent = 'Your recommendations are ready.';
   } catch (error) {
     statusLine.textContent = error.name === 'AbortError' ? 'This is taking longer than expected. Please try again or browse our wines below.' : (error instanceof TypeError ? 'We could not connect. Please try again or browse our wines below.' : error.message);
-  } finally { clearTimeout(timeout); submit.disabled = false; }
+  } finally { clearTimeout(timeout); submit.disabled = false; microphone.disabled = false; }
 });
+
+
+// Guest dictation only: no owner-assistant session, voice clone or audio upload to /ask.
+const microphone = document.getElementById('microphone');
+const voiceNote = document.getElementById('voice-note');
+const voiceStatus = document.getElementById('voice-status');
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition = null;
+let listening = false;
+let receivedSpeech = false;
+let voiceFailed = false;
+function stopGuestListening() {
+  if (!recognition || !listening) return;
+  listening = false;
+  microphone.textContent = 'Speak your question';
+  microphone.setAttribute('aria-pressed', 'false');
+  // Ignore late recognition events after navigation, hiding or manual submission.
+  recognition.onresult = null;
+  recognition.abort();
+}
+if (SpeechRecognition && window.isSecureContext) {
+  microphone.hidden = false;
+  voiceNote.textContent = 'Your browser may process speech online. Review the words, then select Find my wine. Replies are text for now.';
+  microphone.addEventListener('click', () => {
+    if (listening) {
+      stopGuestListening();
+      voiceStatus.textContent = 'Microphone stopped. You can edit your question.';
+      return;
+    }
+    if (submit.disabled) return;
+    receivedSpeech = false;
+    voiceFailed = false;
+    try {
+      recognition = new SpeechRecognition();
+      recognition.lang = 'en-US';
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      const session = recognition;
+      session.onresult = event => {
+        if (recognition !== session || !listening) return;
+        const words = Array.from(event.results).filter(item => item.isFinal)
+          .map(item => item[0].transcript).join(' ').trim();
+        if (!words) return;
+        promptInput.value = words.slice(0, promptInput.maxLength);
+        receivedSpeech = true;
+        voiceStatus.textContent = 'Question captured. Review it, then select Find my wine.';
+        promptInput.focus();
+      };
+      session.onerror = event => {
+        if (recognition !== session) return;
+        voiceFailed = true;
+        const messages = {
+          'not-allowed': 'Microphone access was not allowed. You can type your question.',
+          'service-not-allowed': 'Speech recognition is unavailable here. You can type your question.',
+          'audio-capture': 'No microphone is available. You can type your question.',
+          'no-speech': 'No speech was detected. Try again or type your question.',
+          'network': 'Speech recognition could not connect. You can type your question.'
+        };
+        if (event.error !== 'aborted') voiceStatus.textContent = messages[event.error] || 'Speech recognition stopped. Try again or type your question.';
+      };
+      session.onend = () => {
+        if (recognition !== session) return;
+        listening = false;
+        microphone.textContent = 'Speak your question';
+        microphone.setAttribute('aria-pressed', 'false');
+        if (!receivedSpeech && !voiceFailed && voiceStatus.textContent === 'Listening… Speak your question.') {
+          voiceStatus.textContent = 'No question captured. Try again or type your question.';
+        }
+      };
+      listening = true;
+      microphone.textContent = 'Stop microphone';
+      microphone.setAttribute('aria-pressed', 'true');
+      voiceStatus.textContent = 'Listening… Speak your question.';
+      session.start();
+    } catch (_) {
+      listening = false;
+      microphone.textContent = 'Speak your question';
+      microphone.setAttribute('aria-pressed', 'false');
+      voiceStatus.textContent = 'Speech recognition is unavailable here. You can type your question.';
+    }
+  });
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && listening) {
+    stopGuestListening();
+    voiceStatus.textContent = 'Microphone stopped.';
+  }
+});
+window.addEventListener('pagehide', stopGuestListening);

@@ -41,3 +41,23 @@ not be reused as Dad or expose private memory tools to guests. A recognizable
 Dad voice still requires listening and speaker review, confirmed consent,
 provider selection and requirements, and family recognition testing. No clone,
 speaking avatar, live deployment or Hostinger website change has been made.
+
+## Guest dictation follow-up
+
+The owner approved the portrait design preview on October 18, 2026. Optional
+browser speech recognition now fills the existing question field for review;
+it never automatically submits a recording or opens the private owner assistant.
+Recognition requires a supported secure browser and explicit microphone action.
+Denied access, missing microphones and network failures retain text entry.
+The browser may use its speech service online, which is disclosed before use.
+Microphone activity stops when the page is hidden or a question is submitted.
+Replies remain text: no substitute voice is presented as Dad. Physical-device
+microphone and embedded Hostinger permissions still require verification before
+deployment. This work does not merge or deploy the branch.
+
+Validation: `node --test tests/concierge_voice.test.cjs` passed all seven
+behavior checks (dictation, limits, denial, cancellation, stale events, startup
+failure and `/ask` submission). The focused Python portrait/shop suite passed
+all sixteen checks. JavaScript syntax and `git diff --check` passed. Real-browser
+permission prompts and physical microphone capture are not covered by these
+automated checks.

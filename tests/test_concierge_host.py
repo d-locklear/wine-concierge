@@ -21,5 +21,7 @@ def test_both_customer_pages_identify_the_virtual_host():
         assert b'/static/images/dad-original.jpeg' in response.data
         assert b'alt="Portrait of Dad, our virtual wine host"' in response.data
         assert b'Dad, our AI wine concierge' in response.data
-        assert b'Chat by text below.' in response.data
+        assert b'Ask by text, or use your microphone when supported.' in response.data
+        assert b'id="microphone"' in response.data
+        assert b'id="voice-status"' in response.data
         assert b'id="ask-form"' in response.data

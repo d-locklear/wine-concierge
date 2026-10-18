@@ -18,7 +18,7 @@
         <p class="host-label">MEET YOUR VIRTUAL HOST</p>
         <h1>A warm welcome<br>from Dad.</h1>
         <p class="intro">Tell us what you enjoy or what’s on the menu. Dad, our AI wine concierge, will help you explore our family’s wines.</p>
-        <p class="host-disclosure">A virtual host inspired by Dad. Chat by text below.</p>
+        <p class="host-disclosure">A virtual host inspired by Dad. Ask by text, or use your microphone when supported.</p>
       </div>
     </div>
   </header>
@@ -33,6 +33,11 @@
     <form id="ask-form">
       <label for="prompt">What do you have in mind?</label>
       <textarea id="prompt" name="prompt" maxlength="2000" rows="3" required placeholder="I like peach flavors and sweet wine. What would you suggest?"></textarea>
+      <div class="voice-controls">
+        <button type="button" id="microphone" aria-pressed="false" aria-describedby="voice-note" hidden>Speak your question</button>
+        <p id="voice-note">You can always type your question.</p>
+        <p id="voice-status" role="status" aria-live="polite"></p>
+      </div>
       <div class="form-footer"><span>AI guidance · based on our wine catalog</span><button class="primary" id="submit" type="submit">Find my wine <span aria-hidden="true">→</span></button></div>
     </form>
     <p id="status" role="status" aria-live="polite"></p>
