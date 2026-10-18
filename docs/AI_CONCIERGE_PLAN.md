@@ -80,3 +80,16 @@ Use `pip install -r requirements-preview.txt` and
 Render free web service. The main branch and existing service remain unchanged.
 Questions submitted in this preview use the existing recommendation backend.
 Physical phone microphone testing and recognizable voice remain pending.
+
+## iPhone microphone correction, October 18
+
+Owner phone test: typed questions responded, but dictation requested mic access
+without capturing words. Preview logs showed the phone loaded the page, with
+no guest `/ask` request during the failed dictation. A likely client-side cause
+was the visibility-change listener aborting recognition during iOS permission
+UI; that listener was removed. Interim text is now shown without focusing the
+textarea, and a hung recognition session resets after 20 seconds with a
+Safari/keyboard-dictation fallback. This is a code correction and hypothesis,
+not proof of physical iPhone recognition. WebKit documents that SpeechRecognition
+behavior may differ in embedded app browsers; test the updated preview on
+Safari proper before considering a different transcription path.

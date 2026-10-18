@@ -76,9 +76,12 @@ let recognition = null;
 let listening = false;
 let receivedSpeech = false;
 let voiceFailed = false;
+let listeningTimeout = null;
 function stopGuestListening() {
   if (!recognition || !listening) return;
   listening = false;
+  clearTimeout(listeningTimeout);
+  listeningTimeout = null;
   microphone.textContent = 'Speak your question';
   microphone.setAttribute('aria-pressed', 'false');
   // Ignore late recognition events after navigation, hiding or manual submission.
@@ -87,7 +90,7 @@ function stopGuestListening() {
 }
 if (SpeechRecognition && window.isSecureContext) {
   microphone.hidden = false;
-  voiceNote.textContent = 'Your browser may process speech online. Review the words, then select Find my wine. Replies are text for now.';
+  voiceNote.textContent = 'Your browser may process speech online. Review the words, then select Find my wine. On iPhone, you can also tap the keyboard microphone in the question field. Replies are text for now.';
   microphone.addEventListener('click', () => {
     if (listening) {
       stopGuestListening();
@@ -105,13 +108,13 @@ if (SpeechRecognition && window.isSecureContext) {
       const session = recognition;
       session.onresult = event => {
         if (recognition !== session || !listening) return;
-        const words = Array.from(event.results).filter(item => item.isFinal)
-          .map(item => item[0].transcript).join(' ').trim();
+        const words = Array.from(event.results).map(item => item[0]?.transcript || '')
+          .join(' ').trim();
         if (!words) return;
         promptInput.value = words.slice(0, promptInput.maxLength);
         receivedSpeech = true;
         voiceStatus.textContent = 'Question captured. Review it, then select Find my wine.';
-        promptInput.focus();
+        // Focusing the textarea can dismiss the iPhone speech capture UI.
       };
       session.onerror = event => {
         if (recognition !== session) return;
@@ -124,10 +127,13 @@ if (SpeechRecognition && window.isSecureContext) {
           'network': 'Speech recognition could not connect. You can type your question.'
         };
         if (event.error !== 'aborted') voiceStatus.textContent = messages[event.error] || 'Speech recognition stopped. Try again or type your question.';
+        stopGuestListening();
       };
       session.onend = () => {
         if (recognition !== session) return;
         listening = false;
+        clearTimeout(listeningTimeout);
+        listeningTimeout = null;
         microphone.textContent = 'Speak your question';
         microphone.setAttribute('aria-pressed', 'false');
         if (!receivedSpeech && !voiceFailed && voiceStatus.textContent === 'Listening… Speak your question.') {
@@ -137,20 +143,27 @@ if (SpeechRecognition && window.isSecureContext) {
       listening = true;
       microphone.textContent = 'Stop microphone';
       microphone.setAttribute('aria-pressed', 'true');
-      voiceStatus.textContent = 'Listening… Speak your question.';
+      voiceStatus.textContent = 'Waiting for microphone access…';
+      session.onstart = () => {
+        if (recognition === session && listening) voiceStatus.textContent = 'Listening… Speak your question.';
+      };
       session.start();
+      listeningTimeout = setTimeout(() => {
+        if (recognition !== session || !listening) return;
+        stopGuestListening();
+        voiceStatus.textContent = receivedSpeech
+          ? 'Words captured. Review your question and select Find my wine.'
+          : 'No words came through. Try Safari directly or use the iPhone keyboard microphone in the question field.';
+      }, 20000);
     } catch (_) {
       listening = false;
+      clearTimeout(listeningTimeout);
+      listeningTimeout = null;
       microphone.textContent = 'Speak your question';
       microphone.setAttribute('aria-pressed', 'false');
       voiceStatus.textContent = 'Speech recognition is unavailable here. You can type your question.';
     }
   });
 }
-document.addEventListener('visibilitychange', () => {
-  if (document.hidden && listening) {
-    stopGuestListening();
-    voiceStatus.textContent = 'Microphone stopped.';
-  }
-});
+// iOS permission prompts can temporarily hide the document. Stop only on actual navigation.
 window.addEventListener('pagehide', stopGuestListening);
