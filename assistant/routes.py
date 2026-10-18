@@ -1,12 +1,15 @@
 import hmac
 import json
 import os
+import re
 
 from datetime import datetime, timezone
 
 import requests
 from flask import Blueprint, Response, current_app, jsonify, request, send_from_directory
 
+from . import calendar_client
+from .calendar_client import CalendarError, CalendarNotConfigured, EventNotFound
 from .memory_store import (
     CATEGORIES,
     MAX_MEMORY_CHARS,
@@ -44,9 +47,18 @@ commitments, open questions, people, preferences, "what did we say about...", \
 If a past conversation looks relevant and they want specifics or exact wording, \
 call read_conversation with its session_id. Answer only from what these return, \
 say when something is from (for example "on September 25th you decided..."), and \
-if nothing relevant comes back, say you don't have that rather than guessing. You \
-cannot yet save new memories by voice, set reminders, or take other actions; if \
-asked, say that is coming in a later version."""
+if nothing relevant comes back, say you don't have that rather than guessing.
+
+You can also work with the owner's Google Calendar. Use check_calendar for questions \
+like "what's on tomorrow?". To add something, use add_reminder (a nudge at a moment, \
+e.g. "remind me to call the cork supplier Thursday at 9") or add_calendar_event (a \
+meeting or block of time with a start and end). Before adding anything, read back the \
+title, day, date and time in plain words and ask whether to add it; only call the tool \
+after a clear yes. Resolve relative dates ("Thursday", "next week", "tomorrow morning") \
+against the current date and time given below, use the owner's time zone, and ask when \
+a time is missing or ambiguous rather than guessing. After adding, confirm briefly and \
+mention they can tap Undo. You cannot yet save new memories by voice or send messages; \
+if asked, say that is coming in a later version."""
 
 SEARCH_TOOL = {
     "type": "function",
@@ -66,6 +78,56 @@ SEARCH_TOOL = {
             },
         },
         "required": ["query"],
+    },
+}
+
+ADD_REMINDER_TOOL = {
+    "type": "function",
+    "name": "add_reminder",
+    "description": "Add a reminder to the owner's Google Calendar: a short event that alerts at the given time "
+                   "and doesn't block their schedule. Only call after the owner confirmed the details.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "title": {"type": "string", "description": "What to be reminded about, e.g. 'Call the cork supplier'."},
+            "when": {"type": "string", "description": "ISO 8601 local date-time, e.g. 2026-10-01T09:00:00."},
+            "minutes_before": {"type": "integer", "description": "Alert this many minutes early. Usually 0."},
+            "notes": {"type": "string", "description": "Optional extra detail."},
+        },
+        "required": ["title", "when"],
+    },
+}
+
+ADD_EVENT_TOOL = {
+    "type": "function",
+    "name": "add_calendar_event",
+    "description": "Add an event with a start and end to the owner's Google Calendar. Only call after the owner "
+                   "confirmed the details.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "title": {"type": "string"},
+            "start": {"type": "string", "description": "ISO 8601 local date-time."},
+            "end": {"type": "string", "description": "ISO 8601 local date-time. Defaults to one hour after start."},
+            "location": {"type": "string"},
+            "notes": {"type": "string"},
+            "minutes_before": {"type": "integer", "description": "Alert this many minutes early. Default 10."},
+        },
+        "required": ["title", "start"],
+    },
+}
+
+CHECK_CALENDAR_TOOL = {
+    "type": "function",
+    "name": "check_calendar",
+    "description": "List what's on the owner's Google Calendar between two local date-times.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "start": {"type": "string", "description": "ISO 8601 local date-time."},
+            "end": {"type": "string", "description": "ISO 8601 local date-time."},
+        },
+        "required": ["start", "end"],
     },
 }
 
@@ -112,13 +174,24 @@ def audio_input_config():
     }
 
 
+def session_instructions():
+    """The persona plus the current local date and time, so relative dates resolve correctly."""
+    now = calendar_client.now_local()
+    when = f"{now:%A, %B} {now.day}, {now.year}, {now:%I:%M %p}".replace(" 0", " ")
+    calendar_note = "" if calendar_client.is_configured() else (
+        "\n\nThe calendar isn't connected yet; if asked to use it, say it needs to be set up first."
+    )
+    return (f"{ASSISTANT_INSTRUCTIONS}{calendar_note}\n\nRight now it is {when} "
+            f"({calendar_client.timezone_name()}, UTC offset {now:%z}).")
+
+
 def realtime_session_config():
     return {
         "session": {
             "type": "realtime",
             "model": os.getenv("REALTIME_MODEL", "gpt-realtime"),
-            "instructions": ASSISTANT_INSTRUCTIONS,
-            "tools": [SEARCH_TOOL, READ_CONVERSATION_TOOL],
+            "instructions": session_instructions(),
+            "tools": [SEARCH_TOOL, READ_CONVERSATION_TOOL, ADD_REMINDER_TOOL, ADD_EVENT_TOOL, CHECK_CALENDAR_TOOL],
             "tool_choice": "auto",
             "audio": {
                 "input": audio_input_config(),
@@ -683,3 +756,83 @@ def delete_session(session_id):
     except Exception as exc:  # noqa: BLE001
         return storage_failure(exc)
     return "", 204
+
+
+EVENT_ID = re.compile(r"^[A-Za-z0-9_\-@.]{1,1024}$")
+
+
+def audit_calendar(action, event_id):
+    """Record calendar actions in the audit log when storage is set up."""
+    try:
+        get_store().log_action("calendar", action, event_id)
+    except Exception as exc:  # noqa: BLE001 - never block the calendar action on auditing
+        current_app.logger.warning("Calendar action not audited: %s", type(exc).__name__)
+
+
+def calendar_failure(exc):
+    if isinstance(exc, CalendarNotConfigured):
+        return jsonify({"error": "Google Calendar isn't connected yet (GOOGLE_CALENDAR_USER)"}), 503
+    current_app.logger.error("Calendar request failed: %s", exc)
+    return jsonify({"error": f"Google Calendar: {exc}"}), 502
+
+
+@assistant_bp.route("/calendar/events", methods=["POST"])
+def add_calendar_item():
+    """Create a reminder or event the owner confirmed."""
+    denied = check_access()
+    if denied:
+        return denied
+    body = request.get_json(silent=True) or {}
+    kind = body.get("kind")
+    minutes_before = body.get("minutes_before")
+    if minutes_before is None:
+        minutes_before = 0 if kind == "reminder" else 10
+    try:
+        event = calendar_client.build_event(
+            kind, body.get("title"), body.get("start"), end=body.get("end"),
+            minutes_before=minutes_before, location=body.get("location"), notes=body.get("notes"),
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    try:
+        created = calendar_client.create_event(event)
+    except (CalendarNotConfigured, CalendarError) as exc:
+        return calendar_failure(exc)
+    audit_calendar(f"created_{kind}", created["id"])
+    return jsonify({"event": created}), 201
+
+
+@assistant_bp.route("/calendar/events/<event_id>", methods=["DELETE"])
+def undo_calendar_item(event_id):
+    """Undo: delete an event, but only one this assistant created."""
+    denied = check_access()
+    if denied:
+        return denied
+    if not EVENT_ID.match(event_id):
+        return jsonify({"error": "Invalid event id"}), 400
+    try:
+        calendar_client.delete_assistant_event(event_id)
+    except EventNotFound:
+        return jsonify({"error": "That event isn't one the assistant added, or it's already gone"}), 404
+    except (CalendarNotConfigured, CalendarError) as exc:
+        return calendar_failure(exc)
+    audit_calendar("deleted", event_id)
+    return "", 204
+
+
+@assistant_bp.route("/calendar/events", methods=["GET"])
+def check_calendar():
+    denied = check_access()
+    if denied:
+        return denied
+    try:
+        start = calendar_client.parse_when(request.args.get("start"))
+        end = calendar_client.parse_when(request.args.get("end"))
+    except ValueError:
+        return jsonify({"error": "start and end must be ISO 8601 date-times"}), 400
+    if end <= start or (end - start).days > 62:
+        return jsonify({"error": "The range must be forward and at most about two months"}), 400
+    try:
+        return jsonify({"events": calendar_client.list_events(start, end), "timezone": calendar_client.timezone_name()})
+    except (CalendarNotConfigured, CalendarError) as exc:
+        return calendar_failure(exc)

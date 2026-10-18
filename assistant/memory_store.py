@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS memory_audit (
     at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ALTER TABLE memory_audit ADD COLUMN IF NOT EXISTS subject TEXT NOT NULL DEFAULT 'memory';
+ALTER TABLE memory_audit ADD COLUMN IF NOT EXISTS ref TEXT;
 """
 
 
@@ -339,13 +340,22 @@ class MemoryStore:
             ids = [r["id"] for r in conn.execute("SELECT id FROM sessions ORDER BY id").fetchall()]
         return [self.get_session(i) for i in ids]
 
+    def log_action(self, subject, action, ref):
+        """Audit an outside action (e.g. a calendar event) identified by an external ref."""
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO memory_audit (memory_id, action, subject, ref) VALUES (0, %s, %s, %s)",
+                (action, subject, str(ref)[:1024]),
+            )
+
     def audit(self, limit=200):
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT memory_id, action, subject, at FROM memory_audit ORDER BY at DESC, id DESC LIMIT %s", (limit,)
+                "SELECT memory_id, action, subject, ref, at FROM memory_audit ORDER BY at DESC, id DESC LIMIT %s", (limit,)
             ).fetchall()
         return [
-            {"subject": r["subject"], "id": r["memory_id"], "memory_id": r["memory_id"], "action": r["action"], "at": iso(r["at"])}
+            {"subject": r["subject"], "id": r["ref"] or r["memory_id"], "memory_id": r["memory_id"],
+             "action": r["action"], "at": iso(r["at"])}
             for r in rows
         ]
 

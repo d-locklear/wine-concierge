@@ -436,7 +436,7 @@ def test_session_config_offers_read_conversation_tool(client, monkeypatch):
     with patch("assistant.routes.requests.post", return_value=upstream) as post:
         client.post("/assistant/session", headers=AUTH)
     tools = [t["name"] for t in post.call_args.kwargs["json"]["session"]["tools"]]
-    assert tools == ["search_memories", "read_conversation"]
+    assert {"search_memories", "read_conversation"} <= set(tools)
 
 
 # --- Real Postgres (set TEST_DATABASE_URL to run) ---
