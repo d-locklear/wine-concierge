@@ -20,4 +20,103 @@ Repository: d-locklear/wine-concierge. Test changes before production deployment
 - Validate portfolio data and build a test conversation flow.
 
 ## Status
-Planning document created. No portrait asset, voice clone, deployment or live website update is implied by this document.
+Portrait implementation prepared on `feature/dad-original-portrait` for review. The
+customer pages at `/` and `/embed` display the exact original uploaded JPEG as
+`static/images/dad-original.jpeg`, without regeneration, recompression or cropping.
+Both supplied portrait files were byte-identical. The image is 1254 × 1254 pixels;
+its SHA-256 is `977be9e3b0d53b8a42d46f149ecff7e24e5808948a4fe1f1dd7c2e012d7c5fb0`.
+The page explicitly identifies Dad as a virtual AI host and describes the current
+interaction as text. The `/ask` contract and catalog behavior are unchanged.
+
+Audio inventory: four supplied voicemails contain about 52.9 seconds total, and
+the supplied video is about 24.3 seconds long with an audio stream. One voicemail
+uses an 8 kHz mono stream; three use 44.1 kHz stereo; the video uses 44.1 kHz mono.
+These are container/codec observations, not measurements of usable speech,
+speaker identity, clarity or suitability for cloning. Source audio/video remains
+private and is not committed to this public repository.
+
+The customer concierge has no voice implementation. The separate authenticated
+owner assistant has realtime speech using a configured provider voice; it must
+not be reused as Dad or expose private memory tools to guests. A recognizable
+Dad voice still requires listening and speaker review, confirmed consent,
+provider selection and requirements, and family recognition testing. No clone,
+speaking avatar, live deployment or Hostinger website change has been made.
+
+## Guest dictation follow-up
+
+The owner approved the portrait design preview on October 18, 2026. Optional
+browser speech recognition now fills the existing question field for review;
+it never automatically submits a recording or opens the private owner assistant.
+Recognition requires a supported secure browser and explicit microphone action.
+Denied access, missing microphones and network failures retain text entry.
+The browser may use its speech service online, which is disclosed before use.
+Microphone activity stops when the page is hidden or a question is submitted.
+Replies remain text: no substitute voice is presented as Dad. Physical-device
+microphone and embedded Hostinger permissions still require verification before
+deployment. This work does not merge or deploy the branch.
+
+Validation: `node --test tests/concierge_voice.test.cjs` passed all seven
+behavior checks (dictation, limits, denial, cancellation, stale events, startup
+failure and `/ask` submission). The focused Python portrait/shop suite passed
+all sixteen checks. JavaScript syntax and `git diff --check` passed. Real-browser
+permission prompts and physical microphone capture are not covered by these
+automated checks.
+
+## Public host name
+
+Owner requested Charlie as the guest-facing host name on October 18, 2026.
+The welcome heading, introduction, image alternative text, page title and AI
+disclosure use Charlie. The original portrait asset and its filename are unchanged.
+The design preview uses the same name.
+
+## Hosted phone-test preview
+
+`preview_app.py` serves the review-branch customer UI with a test-preview label.
+It forwards validated guest questions and public catalog reads only to the
+existing public concierge. No production secrets, database access, owner
+assistant modules or private memory endpoints are included in this server.
+Use `pip install -r requirements-preview.txt` and
+`gunicorn preview_app:app --bind 0.0.0.0:$PORT --timeout 90` for the separate
+Render free web service. The main branch and existing service remain unchanged.
+Questions submitted in this preview use the existing recommendation backend.
+Physical phone microphone testing and recognizable voice remain pending.
+
+## iPhone microphone correction, October 18
+
+Owner phone test: typed questions responded, but dictation requested mic access
+without capturing words. Preview logs showed the phone loaded the page, with
+no guest `/ask` request during the failed dictation. A likely client-side cause
+was the visibility-change listener aborting recognition during iOS permission
+UI; that listener was removed. Interim text is now shown without focusing the
+textarea, and a hung recognition session resets after 20 seconds with a
+Safari/keyboard-dictation fallback. This is a code correction and hypothesis,
+not proof of physical iPhone recognition. WebKit documents that SpeechRecognition
+behavior may differ in embedded app browsers; test the updated preview on
+Safari proper before considering a different transcription path.
+
+## iPhone dictation fallback
+
+The corrected Web Speech approach still did not capture words in the owner's
+iPhone test. On iPhone and iPad, the guest control now opens the question field
+and instructs the visitor to tap the microphone on the native keyboard. This
+uses iOS dictation to populate editable text, then the visitor submits it.
+No page microphone permission is requested in this path. Desktop browsers with
+SpeechRecognition retain the browser listening flow. At this stage direct
+in-page recording was still pending, as is Charlie's recognizable voice.
+
+## Direct recording prototype
+
+The review branch now contains a separate preview-only `/transcribe` route.
+When `OPENAI_API_KEY` is configured on the preview service, the customer page
+uses `getUserMedia` and `MediaRecorder` to capture up to 20 seconds of audio.
+It sends the recording to the preview service for `gpt-transcribe` transcription,
+then fills the editable question field. The guest submits the text separately.
+The server accepts only supported audio formats under 2 MiB and limits requests;
+it does not retain recordings or add them to the public repository. The page
+discloses that audio is sent for transcription. When the key is absent, the
+existing iPhone keyboard dictation fallback remains visible.
+
+Code and automated checks are ready; a Render preview secret and physical
+iPhone capture test are still required. Do not call the microphone fixed until
+audio has been captured and transcribed on the owner's device. No production
+service or Hostinger change is part of this prototype.
