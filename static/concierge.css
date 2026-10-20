@@ -7,3 +7,5 @@
 .host-label{font-size:13px;color:var(--wine);margin:0}
 .embedded .host-copy h1{font-size:32px}
 @media(max-width:520px){.host-introduction{grid-template-columns:92px minmax(0,1fr);gap:16px}.host-copy h1,.embedded .host-copy h1{font-size:27px}.host-label{font-size:12px}}
+
+.voice-controls{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px}.voice-controls button{border:1px solid var(--line);background:#faf7f3;color:var(--wine);border-radius:8px;padding:10px 14px}.voice-controls button[hidden]{display:none}
