@@ -47,3 +47,4 @@ flask-cors==4.0.0
 psycopg[binary]==3.3.6
 cryptography==50.0.1
 numpy==2.2.6
+imageio-ffmpeg==0.6.0

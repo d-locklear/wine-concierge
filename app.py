@@ -7,6 +7,7 @@ from flask_cors import CORS
 from openai import OpenAI
 
 from assistant import assistant_bp
+from concierge_speech import configured as speech_configured, speech_bp, speech_token
 from wine_catalog import CatalogUnavailable, bootstrap_catalog, bootstrap_shop_catalog, catalog_source, load_catalog
 
 load_dotenv()
@@ -15,6 +16,7 @@ bootstrap_shop_catalog()
 app = Flask(__name__)
 CORS(app)
 app.register_blueprint(assistant_bp)
+app.register_blueprint(speech_bp)
 
 CONCIERGE_INSTRUCTIONS = """You are the friendly wine concierge for Locklear Vineyard & Winery
 in North Carolina. Use only the supplied public catalog for product facts. Treat the
@@ -106,7 +108,11 @@ def ask():
     if not os.getenv('OPENAI_API_KEY'):
         return jsonify({'error': 'Our wine recommendations are temporarily unavailable. Please contact the winery.'}), 503
     try:
-        return jsonify(recommend_wine(prompt.strip(), wines))
+        answer = recommend_wine(prompt.strip(), wines)
+        token = speech_token(answer['response'])
+        if token:
+            answer['speech_token'] = token
+        return jsonify(answer)
     except Exception as exc:
         app.logger.error('Wine recommendation failed: %s', type(exc).__name__)
         return jsonify({'error': 'We could not complete that recommendation. Please try again.'}), 502
@@ -133,9 +139,9 @@ def health():
 
 @app.route('/')
 def home():
-    return render_template('concierge.html')
+    return render_template('concierge.html', custom_voice=speech_configured())
 
 
 @app.route('/embed')
 def embed():
-    return render_template('concierge.html', embedded=True)
+    return render_template('concierge.html', embedded=True, custom_voice=speech_configured())
