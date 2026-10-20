@@ -71,9 +71,14 @@ const speakToggle = document.getElementById('speak-toggle');
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recognition = null;
 let listening = false;
-if (SpeechRecognition && micButton) {
+if (micButton) {
   micButton.hidden = false;
   micButton.addEventListener('click', () => {
+    if (!SpeechRecognition) {
+      promptInput.focus();
+      statusLine.textContent = 'Voice recognition is not supported in this browser. On iPhone, tap the microphone on your keyboard to dictate your question, then tap Find my wine.';
+      return;
+    }
     if (listening) { recognition.stop(); return; }
     recognition = new SpeechRecognition();
     recognition.lang = 'en-US';
