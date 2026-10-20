@@ -63,3 +63,37 @@ form.addEventListener('submit', async event => {
     statusLine.textContent = error.name === 'AbortError' ? 'This is taking longer than expected. Please try again or browse our wines below.' : (error instanceof TypeError ? 'We could not connect. Please try again or browse our wines below.' : error.message);
   } finally { clearTimeout(timeout); submit.disabled = false; }
 });
+
+
+// Optional browser voice features. Typed questions remain available everywhere.
+const micButton = document.getElementById('mic-button');
+const speakToggle = document.getElementById('speak-toggle');
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition = null;
+let listening = false;
+if (SpeechRecognition && micButton) {
+  micButton.hidden = false;
+  micButton.addEventListener('click', () => {
+    if (listening) { recognition.stop(); return; }
+    recognition = new SpeechRecognition();
+    recognition.lang = 'en-US';
+    recognition.interimResults = false;
+    recognition.continuous = false;
+    recognition.onstart = () => { listening = true; micButton.textContent = 'Stop listening'; micButton.setAttribute('aria-pressed', 'true'); statusLine.textContent = 'Listening for your question…'; };
+    recognition.onresult = event => { promptInput.value = event.results[0][0].transcript; statusLine.textContent = 'Question captured. Tap Find my wine to continue.'; promptInput.focus(); };
+    recognition.onerror = event => { statusLine.textContent = event.error === 'not-allowed' ? 'Microphone access was denied. Please enable it in browser settings or type your question.' : 'Voice input was unavailable. You can type your question instead.'; };
+    recognition.onend = () => { listening = false; micButton.textContent = '🎙 Speak your question'; micButton.setAttribute('aria-pressed', 'false'); };
+    try { recognition.start(); } catch (_) { statusLine.textContent = 'Voice input could not start. Please type your question.'; }
+  });
+}
+if (speakToggle && 'speechSynthesis' in window) {
+  speakToggle.hidden = false;
+  speakToggle.addEventListener('click', () => {
+    if (window.speechSynthesis.speaking) { window.speechSynthesis.cancel(); return; }
+    const answer = document.getElementById('answer').textContent.trim();
+    if (!answer) return;
+    const utterance = new SpeechSynthesisUtterance(answer);
+    utterance.lang = 'en-US'; utterance.rate = 0.95;
+    window.speechSynthesis.speak(utterance);
+  });
+}
