@@ -48,6 +48,9 @@ for (const button of document.querySelectorAll('[data-prompt]')) {
 form.addEventListener('submit', async event => {
   event.preventDefault();
   if (submit.disabled || !promptInput.value.trim()) return;
+  stopPlayback();
+  replySpeechToken = null;
+  if (speakToggle) speakToggle.disabled = true;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 65000);
   submit.disabled = true; result.hidden = true; statusLine.textContent = 'Finding a wine for you…';
@@ -57,6 +60,8 @@ form.addEventListener('submit', async event => {
     if (!response.ok) throw new Error(data.error || 'We could not complete that recommendation. Please try again.');
     if (typeof data.response !== 'string' || !Array.isArray(data.wines)) throw new Error('Please try your question again.');
     document.getElementById('answer').textContent = data.response;
+    replySpeechToken = typeof data.speech_token === 'string' ? data.speech_token : null;
+    if (speakToggle) speakToggle.disabled = customVoice && !replySpeechToken;
     cards.replaceChildren(); data.wines.forEach(renderWine);
     result.hidden = false; statusLine.textContent = 'Your recommendations are ready.';
   } catch (error) {
@@ -68,6 +73,23 @@ form.addEventListener('submit', async event => {
 // Optional browser voice features. Typed questions remain available everywhere.
 const micButton = document.getElementById('mic-button');
 const speakToggle = document.getElementById('speak-toggle');
+const customVoice = document.body.dataset.customVoice === 'true';
+let replySpeechToken = null;
+let playback = null;
+let playbackUrl = null;
+let playbackRequest = null;
+let playbackVersion = 0;
+function stopPlayback() {
+  playbackVersion += 1;
+  if (playbackRequest) playbackRequest.abort();
+  playbackRequest = null;
+  if (playback) playback.pause();
+  playback = null;
+  if (playbackUrl) URL.revokeObjectURL(playbackUrl);
+  playbackUrl = null;
+  if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+  if (speakToggle) speakToggle.textContent = customVoice ? '🔊 Hear Charlie’s answer' : '🔊 Read answer (device voice)';
+}
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recognition = null;
 let listening = false;
@@ -91,14 +113,64 @@ if (micButton) {
     try { recognition.start(); } catch (_) { statusLine.textContent = 'Voice input could not start. Please type your question.'; }
   });
 }
-if (speakToggle && 'speechSynthesis' in window) {
+if (speakToggle && (customVoice || 'speechSynthesis' in window)) {
   speakToggle.hidden = false;
-  speakToggle.addEventListener('click', () => {
-    if (window.speechSynthesis.speaking) { window.speechSynthesis.cancel(); return; }
+  speakToggle.disabled = true;
+  speakToggle.textContent = customVoice ? '🔊 Hear Charlie’s answer' : '🔊 Read answer (device voice)';
+  speakToggle.addEventListener('click', async () => {
     const answer = document.getElementById('answer').textContent.trim();
     if (!answer) return;
-    const utterance = new SpeechSynthesisUtterance(answer);
-    utterance.lang = 'en-US'; utterance.rate = 0.95;
-    window.speechSynthesis.speak(utterance);
+    if (!customVoice) {
+      if (window.speechSynthesis.speaking) { window.speechSynthesis.cancel(); return; }
+      const utterance = new SpeechSynthesisUtterance(answer);
+      utterance.lang = 'en-US'; utterance.rate = 0.95;
+      window.speechSynthesis.speak(utterance);
+      return;
+    }
+    if (!replySpeechToken) return;
+    if (playback && !playback.paused) {
+      playback.pause(); speakToggle.textContent = '🔊 Hear Charlie’s answer'; return;
+    }
+    const version = playbackVersion;
+    let timeout;
+    try {
+      if (!playback) {
+        speakToggle.disabled = true;
+        statusLine.textContent = 'Preparing Charlie’s voice…';
+        playbackRequest = new AbortController();
+        timeout = setTimeout(() => playbackRequest && playbackRequest.abort(), 30000);
+        const response = await fetch('/speech', {method:'POST', headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({token:replySpeechToken}), signal:playbackRequest.signal});
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.error || 'Voice playback is unavailable. You can read the answer below.');
+        }
+        const blob = await response.blob();
+        if (version !== playbackVersion) return;
+        if (!blob.type.startsWith('audio/')) throw new Error('Voice playback is unavailable. You can read the answer below.');
+        playbackUrl = URL.createObjectURL(blob);
+        playback = new Audio(playbackUrl);
+        playback.onended = () => { speakToggle.textContent = '🔊 Hear Charlie’s answer'; };
+        playback.onerror = () => { stopPlayback(); statusLine.textContent = 'Audio could not play. Try playback again or read the answer below.'; };
+      }
+      if (version !== playbackVersion) return;
+      try {
+        await playback.play();
+        speakToggle.textContent = 'Stop Charlie’s voice';
+        statusLine.textContent = 'Playing Charlie’s answer.';
+      } catch (_) {
+        // iPhone may require a second gesture after the audio finishes loading.
+        speakToggle.textContent = '▶ Play Charlie’s answer';
+        statusLine.textContent = 'Charlie’s audio is ready. Tap Play Charlie’s answer to listen.';
+      }
+    } catch (error) {
+      if (version === playbackVersion) statusLine.textContent = error.name === 'AbortError'
+        ? 'Voice preparation took too long. Try playback again or read the answer below.'
+        : (error instanceof TypeError ? 'Voice playback could not connect. You can read the answer below.' : error.message);
+    } finally {
+      clearTimeout(timeout);
+      if (version === playbackVersion) { playbackRequest = null; speakToggle.disabled = false; }
+    }
   });
 }
+window.addEventListener('pagehide', stopPlayback);

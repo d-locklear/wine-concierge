@@ -6,9 +6,9 @@
   <meta name="description" content="Find a Locklear wine for your taste, your table, or your next celebration.">
   <title>Charlie, Our AI Wine Concierge | Locklear Winery</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='concierge.css', v='charlie-20261020') }}">
-  <script src="{{ url_for('static', filename='concierge.js', v='voice-20261020b') }}" defer></script>
+  <script src="{{ url_for('static', filename='concierge.js', v='custom-voice-20261020') }}" defer></script>
 </head>
-<body class="{{ 'embedded' if embedded else '' }}">
+<body class="{{ 'embedded' if embedded else '' }}" data-custom-voice="{{ 'true' if custom_voice else 'false' }}">
 <main>
   <header>
     <p class="eyebrow">LOCKLEAR VINEYARD &amp; WINERY</p>
