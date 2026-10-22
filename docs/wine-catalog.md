@@ -162,3 +162,30 @@ GitHub is the project's durable home as requested by the owner; see `AGENTS.md`.
 Hostinger still contains the old text-only widget. Replacing it with the `/embed`
 iframe remains a separate website-builder step; the app deployment does not
 change Hostinger's saved HTML.
+
+
+## October 22 buying-location rollout
+
+PR #16 added the approved public buying directory without changing Postgres wine
+records or import behavior. The directory contains all 509 NC Food Lion grocery
+stores, 37 other reviewed retailers, the winery, online shop and statewide Food
+Lion overview. Collection reconciled 243 official city entries and 526 detail
+pages; 17 pharmacy pages were excluded. Every grocery record has its official
+public address, ZIP, phone and source URL. Location listing never claims current
+bottle stock or nearest-distance ranking.
+
+Render deployment `dep-dbd72irl550s73athff0`, application commit
+`f78bfb095aeeffff00628ecc5e5dce1e7ec46e36`, reached live on October 22.
+Health returned ready/Postgres/14 wines, and catalog readback retained 14 wines.
+Live Cary search returned three Food Lion street addresses; ZIP 28372 returned
+matching local retailer addresses; Food Lion search reported all 509 grocery
+records plus the chain overview/online alternative with a 24-card limit.
+A regular peach recommendation returned Peach and retained signed voice support.
+The published Hostinger homepage loaded the new location field and cards.
+
+Validation: 42 relevant Python tests and five Node playback/location tests passed;
+all 509 Food Lion ZIP lookups passed locally. Details and refresh instructions
+are in `docs/purchase-locations.md`.
+
+Custom voice playback of the Cary location answer was verified inside the
+published Hostinger homepage embed after deployment.
