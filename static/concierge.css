@@ -9,3 +9,5 @@
 @media(max-width:520px){.host-introduction{grid-template-columns:92px minmax(0,1fr);gap:16px}.host-copy h1,.embedded .host-copy h1{font-size:27px}.host-label{font-size:12px}}
 
 .voice-controls{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px}.voice-controls button{border:1px solid var(--line);background:#faf7f3;color:var(--wine);border-radius:8px;padding:10px 14px}.voice-controls button[hidden]{display:none}
+
+#location{width:100%;border:1px solid #bdb2a6;border-radius:8px;padding:10px 14px;font:inherit;margin-bottom:12px}label[for="location"]{margin-top:12px}#location:focus{outline:3px solid #bb8d66;outline-offset:3px}

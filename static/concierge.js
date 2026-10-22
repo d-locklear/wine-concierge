@@ -21,6 +21,26 @@ function safePurchaseUrl(value) {
   } catch (_) { /* Use the verified storefront when a product URL is missing. */ }
   return shopUrl;
 }
+function locationLink(card, value, label) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || url.username || url.password ||
+        !['locklearwinery.com', 'www.locklearwinery.com', 'vinoshipper.com', 'www.google.com', 'stores.foodlion.com', 'www.walmart.com', 'www.lowesfoods.com', 'www.carliecs.com', 'freshfoods.us', 'www.pigglywiggly.com', 'www.welltravelledbeer.com'].includes(url.hostname)) return;
+    const link = document.createElement('a'); link.href = url.href;
+    link.target = '_blank'; link.rel = 'noopener'; link.textContent = label; card.append(link);
+  } catch (_) { /* Invalid links are omitted. */ }
+}
+function renderLocation(location) {
+  const card = document.createElement('article'); card.className = 'wine-card';
+  const name = document.createElement('h3'); name.textContent = location.name; card.append(name);
+  if (location.coverage) paragraph(card, location.coverage, 'details');
+  paragraph(card, [location.address, location.city, location.state, location.postal_code].filter(Boolean).join(', '));
+  if (location.phone) paragraph(card, `Phone: ${location.phone}`, 'details');
+  paragraph(card, `Location details checked ${location.checked_on}. Call ahead for current wines and stock.`, 'stock');
+  locationLink(card, location.url, location.kind === 'online' ? 'Browse the online shop ↗' : location.kind === 'chain' ? 'Find a North Carolina Food Lion ↗' : 'Location details ↗');
+  if (location.directions_url) locationLink(card, location.directions_url, 'Get directions ↗');
+  cards.append(card);
+}
 function renderWine(wine) {
   const card = document.createElement('article');
   card.className = 'wine-card';
@@ -47,15 +67,15 @@ for (const button of document.querySelectorAll('[data-prompt]')) {
 }
 form.addEventListener('submit', async event => {
   event.preventDefault();
-  if (submit.disabled || !promptInput.value.trim()) return;
+  if (submit.disabled || (!promptInput.value.trim() && !document.getElementById('location')?.value.trim())) return;
   stopPlayback();
   replySpeechToken = null;
   if (speakToggle) speakToggle.disabled = true;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 65000);
-  submit.disabled = true; result.hidden = true; statusLine.textContent = 'Finding a wine for you…';
+  submit.disabled = true; result.hidden = true; statusLine.textContent = 'Checking for you…';
   try {
-    const response = await fetch('/ask', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:promptInput.value.trim()}),signal:controller.signal});
+    const response = await fetch('/ask', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:promptInput.value.trim() || 'Where can I buy your wines?', location:document.getElementById('location')?.value.trim() || ''}),signal:controller.signal});
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'We could not complete that recommendation. Please try again.');
     if (typeof data.response !== 'string' || !Array.isArray(data.wines)) throw new Error('Please try your question again.');
@@ -63,7 +83,10 @@ form.addEventListener('submit', async event => {
     replySpeechToken = typeof data.speech_token === 'string' ? data.speech_token : null;
     if (speakToggle) speakToggle.disabled = customVoice && !replySpeechToken;
     cards.replaceChildren(); data.wines.forEach(renderWine);
-    result.hidden = false; statusLine.textContent = 'Your recommendations are ready.';
+    if (Array.isArray(data.locations)) data.locations.forEach(renderLocation);
+    const heading = document.getElementById('result-heading');
+    if (heading) heading.textContent = Array.isArray(data.locations) ? 'Where to buy' : 'Your wine picks';
+    result.hidden = false; statusLine.textContent = Array.isArray(data.locations) ? 'Your buying options are ready.' : 'Your recommendations are ready.';
   } catch (error) {
     statusLine.textContent = error.name === 'AbortError' ? 'This is taking longer than expected. Please try again or browse our wines below.' : (error instanceof TypeError ? 'We could not connect. Please try again or browse our wines below.' : error.message);
   } finally { clearTimeout(timeout); submit.disabled = false; }
