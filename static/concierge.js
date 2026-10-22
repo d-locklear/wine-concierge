@@ -25,7 +25,7 @@ function locationLink(card, value, label) {
   try {
     const url = new URL(value);
     if (url.protocol !== 'https:' || url.username || url.password ||
-        !['locklearwinery.com', 'www.locklearwinery.com', 'vinoshipper.com', 'www.google.com'].includes(url.hostname)) return;
+        !['locklearwinery.com', 'www.locklearwinery.com', 'vinoshipper.com', 'www.google.com', 'stores.foodlion.com', 'www.walmart.com', 'www.lowesfoods.com', 'www.carliecs.com', 'freshfoods.us', 'www.pigglywiggly.com', 'www.welltravelledbeer.com'].includes(url.hostname)) return;
     const link = document.createElement('a'); link.href = url.href;
     link.target = '_blank'; link.rel = 'noopener'; link.textContent = label; card.append(link);
   } catch (_) { /* Invalid links are omitted. */ }
@@ -33,10 +33,11 @@ function locationLink(card, value, label) {
 function renderLocation(location) {
   const card = document.createElement('article'); card.className = 'wine-card';
   const name = document.createElement('h3'); name.textContent = location.name; card.append(name);
+  if (location.coverage) paragraph(card, location.coverage, 'details');
   paragraph(card, [location.address, location.city, location.state, location.postal_code].filter(Boolean).join(', '));
   if (location.phone) paragraph(card, `Phone: ${location.phone}`, 'details');
   paragraph(card, `Location details checked ${location.checked_on}. Call ahead for current wines and stock.`, 'stock');
-  locationLink(card, location.url, location.kind === 'online' ? 'Browse the online shop ↗' : 'Location details ↗');
+  locationLink(card, location.url, location.kind === 'online' ? 'Browse the online shop ↗' : location.kind === 'chain' ? 'Find a North Carolina Food Lion ↗' : 'Location details ↗');
   if (location.directions_url) locationLink(card, location.directions_url, 'Get directions ↗');
   cards.append(card);
 }
@@ -66,7 +67,7 @@ for (const button of document.querySelectorAll('[data-prompt]')) {
 }
 form.addEventListener('submit', async event => {
   event.preventDefault();
-  if (submit.disabled || !promptInput.value.trim()) return;
+  if (submit.disabled || (!promptInput.value.trim() && !document.getElementById('location')?.value.trim())) return;
   stopPlayback();
   replySpeechToken = null;
   if (speakToggle) speakToggle.disabled = true;
@@ -74,7 +75,7 @@ form.addEventListener('submit', async event => {
   const timeout = setTimeout(() => controller.abort(), 65000);
   submit.disabled = true; result.hidden = true; statusLine.textContent = 'Checking for you…';
   try {
-    const response = await fetch('/ask', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:promptInput.value.trim(), location:document.getElementById('location')?.value.trim() || ''}),signal:controller.signal});
+    const response = await fetch('/ask', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:promptInput.value.trim() || 'Where can I buy your wines?', location:document.getElementById('location')?.value.trim() || ''}),signal:controller.signal});
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'We could not complete that recommendation. Please try again.');
     if (typeof data.response !== 'string' || !Array.isArray(data.wines)) throw new Error('Please try your question again.');
