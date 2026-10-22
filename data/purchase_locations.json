@@ -1,0 +1,27 @@
+{
+  "locations": [
+    {
+      "id": "winery",
+      "name": "Locklear Vineyard & Winery",
+      "kind": "winery",
+      "address": "1872 Preston Road",
+      "city": "Maxton",
+      "state": "NC",
+      "postal_code": "28364",
+      "phone": "910-316-0767",
+      "url": "https://locklearwinery.com/visit-us",
+      "source_url": "https://locklearwinery.com/visit-us",
+      "checked_on": "2026-10-22",
+      "active": true
+    },
+    {
+      "id": "online",
+      "name": "Locklear Winery online shop",
+      "kind": "online",
+      "url": "https://vinoshipper.com/shop/charlie_t_locklear_vineyard_winery",
+      "source_url": "https://locklearwinery.com/",
+      "checked_on": "2026-10-22",
+      "active": true
+    }
+  ]
+}

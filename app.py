@@ -6,6 +6,7 @@ from flask import Flask, jsonify, request, render_template
 from flask_cors import CORS
 from openai import OpenAI
 
+from purchase_locations import is_location_question, location_answer
 from assistant import assistant_bp
 from concierge_speech import configured as speech_configured, speech_bp, speech_token
 from wine_catalog import CatalogUnavailable, bootstrap_catalog, bootstrap_shop_catalog, catalog_source, load_catalog
@@ -101,6 +102,18 @@ def ask():
     prompt = data.get('prompt')
     if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 2000:
         return jsonify({'error': 'Prompt must contain 1–2000 characters'}), 400
+    location = data.get('location', '')
+    if not isinstance(location, str) or len(location) > 120:
+        return jsonify(error='Enter a city, ZIP code, or store name up to 120 characters.'), 400
+    if location.strip() or is_location_question(prompt):
+        try:
+            answer = location_answer(location.strip())
+        except (ValueError, OSError, KeyError, TypeError):
+            return jsonify(error='Our location directory is temporarily unavailable. Please contact the winery.'), 503
+        token = speech_token(answer['response'])
+        if token:
+            answer['speech_token'] = token
+        return jsonify(answer)
     try:
         wines = load_catalog()
     except CatalogUnavailable:
